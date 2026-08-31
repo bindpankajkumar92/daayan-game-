@@ -8,9 +8,14 @@
  * Pooled Vector3 temporaries live elsewhere (Engine). This file only manages time.
  */
 
+/** Distinct failures reported per site before the loop goes quiet about them. */
+const MAX_REPORTED = 6;
+
 export interface GameLoopCallbacks {
   onStep: (fixedDt: number) => void;
   onRender: (alpha: number) => void;
+  /** Called for the first few failures in either callback. The loop keeps running regardless. */
+  onError?: (err: unknown, where: 'step' | 'render') => void;
 }
 
 export class GameLoop {
@@ -21,6 +26,7 @@ export class GameLoop {
   private rafId: number | null = null;
   private running = false;
   private elapsed = 0;
+  private errors = 0;
 
   constructor(
     private callbacks: GameLoopCallbacks,
@@ -56,15 +62,37 @@ export class GameLoop {
     this.accumulator += frameDt;
     let safetyBudget = 8; // never run more than 8 fixed steps in a single frame
     while (this.accumulator >= this.fixedDt && safetyBudget-- > 0) {
-      this.callbacks.onStep(this.fixedDt);
+      // The next frame is scheduled at the bottom of this function, so an exception escaping
+      // either callback used to end the loop for good: the last rendered frame stayed on screen,
+      // input did nothing, and the only symptom left to report was "nothing moves". Absorbing it
+      // here keeps the game responsive and lets the error be seen instead of guessed at.
+      try {
+        this.callbacks.onStep(this.fixedDt);
+      } catch (err) {
+        this.report(err, 'step');
+      }
       this.accumulator -= this.fixedDt;
       this.elapsed += this.fixedDt;
     }
     const alpha = this.accumulator / this.fixedDt;
-    this.callbacks.onRender(alpha);
+    try {
+      this.callbacks.onRender(alpha);
+    } catch (err) {
+      this.report(err, 'render');
+    }
 
     this.rafId = requestAnimationFrame(this.tick);
   };
+
+  /** How many times a callback has thrown. Non-zero means the world is running on a limp. */
+  getErrorCount(): number {
+    return this.errors;
+  }
+
+  private report(err: unknown, where: 'step' | 'render'): void {
+    this.errors++;
+    if (this.errors <= MAX_REPORTED) this.callbacks.onError?.(err, where);
+  }
 
   getElapsedSeconds(): number {
     return this.elapsed;

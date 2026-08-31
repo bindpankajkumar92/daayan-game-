@@ -65,40 +65,47 @@ function pickInitialTier(h: DeviceHints): QualityTier {
 const TIER_PRESETS: Record<QualityTier, QualitySettings> = {
   low: {
     tier: 'low',
-    renderScale: 0.85,
-    maxRealTimeLights: 1,
-    shadowMapEnabled: false,
+    // Start at full (pixel-ratio-capped) resolution and let the scaler walk it down only if
+    // the device actually struggles. Starting below 1.0 made every launch look soft even on
+    // hardware that had the headroom to spare.
+    renderScale: 1.0,
+    maxRealTimeLights: 2,
+    shadowMapEnabled: false, // fake contact shadows instead — no extra render pass
     textureMaxSize: 512,
-    fpsCap: 30,
+    fpsCap: 0, // uncapped; the device is free to run above 30 if it can
     dynamicResolutionEnabled: true,
   },
   mid: {
     tier: 'mid',
     renderScale: 1.0,
-    maxRealTimeLights: 2,
+    maxRealTimeLights: 3,
     shadowMapEnabled: false,
     textureMaxSize: 1024,
-    fpsCap: 60,
+    fpsCap: 0,
     dynamicResolutionEnabled: true,
   },
   high: {
     tier: 'high',
     renderScale: 1.0,
-    maxRealTimeLights: 3,
+    maxRealTimeLights: 4,
     shadowMapEnabled: true,
     textureMaxSize: 1024,
-    fpsCap: 60,
+    fpsCap: 0,
     dynamicResolutionEnabled: true,
   },
 };
 
 export class QualityManager {
   private settings: QualitySettings;
-  private frameTimeEma = 1 / 30; // assume worst case initially
+  private frameTimeEma = 1 / 60; // optimistic start; the EMA corrects within ~10 frames
   private readonly targetFrameTime = 1 / 30; // 30 FPS floor
   private readonly recoverFrameTime = 1 / 45; // when to step scale back up
-  private readonly minScale = 0.6;
-  private readonly maxScale = 1.5;
+  private readonly minScale = 0.65;
+  /** 1.0 == the Engine's capped device pixel ratio. Going above that just burns fill rate. */
+  private readonly maxScale = 1.0;
+  private onScaleChange: ((scale: number) => void) | null = null;
+  /** Frames to wait between scale adjustments so the EMA can settle after each change. */
+  private cooldown = 0;
 
   constructor(override?: { tier?: QualityTier; renderScale?: number }) {
     const hints = readDeviceHints();
@@ -108,8 +115,12 @@ export class QualityManager {
     if (override?.renderScale !== undefined) {
       this.settings.renderScale = clamp(override.renderScale, this.minScale, this.maxScale);
     }
-    // Apply the initial pixel ratio cap.
-    this.applyPixelRatio();
+  }
+
+  /** Register the sink that applies a new scale (normally Engine.setResolutionScale). */
+  setScaleSink(fn: (scale: number) => void): void {
+    this.onScaleChange = fn;
+    fn(this.settings.renderScale);
   }
 
   getSettings(): QualitySettings {
@@ -125,27 +136,28 @@ export class QualityManager {
     // EMA smoothing (alpha = 0.1 -> smooth over ~10 frames).
     this.frameTimeEma = this.frameTimeEma * 0.9 + frameTimeSec * 0.1;
     if (!this.settings.dynamicResolutionEnabled) return;
+    if (this.cooldown > 0) {
+      this.cooldown--;
+      return;
+    }
 
+    const before = this.settings.renderScale;
     if (this.frameTimeEma > this.targetFrameTime * 1.05) {
       // Sustained slow: drop scale by 10%.
-      this.settings.renderScale = Math.max(this.minScale, this.settings.renderScale - 0.1);
-      this.applyPixelRatio();
+      this.settings.renderScale = Math.max(this.minScale, before - 0.1);
     } else if (this.frameTimeEma < this.recoverFrameTime) {
       // Sustained fast: step scale back up.
-      this.settings.renderScale = Math.min(this.maxScale, this.settings.renderScale + 0.05);
-      this.applyPixelRatio();
+      this.settings.renderScale = Math.min(this.maxScale, before + 0.05);
+    }
+    if (this.settings.renderScale !== before) {
+      this.cooldown = 30;
+      this.onScaleChange?.(this.settings.renderScale);
     }
   }
 
   setTier(t: QualityTier): void {
     this.settings = { ...TIER_PRESETS[t] };
-    this.applyPixelRatio();
-  }
-
-  private applyPixelRatio(): void {
-    // Render scale is a multiplier on top of device pixel ratio (capped at 2).
-    // The Engine's resize handler multiplies clientWidth by this scale.
-    // No direct setPixelRatio call here — the size is set elsewhere in main.ts.
+    this.onScaleChange?.(this.settings.renderScale);
   }
 }
 

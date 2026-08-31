@@ -6,6 +6,7 @@
  */
 
 import type { WebGLRenderer } from 'three';
+import { Vector2 } from 'three';
 
 interface FrameSample {
   dt: number; // ms
@@ -22,6 +23,7 @@ export class DebugOverlay {
   private lastTriangles = 0;
   private renderScale = 1.0;
   private qualityTier: 'low' | 'mid' | 'high' = 'low';
+  private readonly tmpSize = new Vector2();
 
   constructor(private renderer: WebGLRenderer, parent: HTMLElement = document.body) {
     this.el = document.createElement('div');
@@ -90,6 +92,8 @@ export class DebugOverlay {
     const low1Fps = 1000 / (lowSum / lowCount);
 
     const r = this.renderer;
+    const dpr = window.devicePixelRatio || 1;
+    const size = r.getSize(this.tmpSize);
     this.el.textContent =
       `FPS avg  ${avgFps.toFixed(1)}\n` +
       `FPS 1%l  ${low1Fps.toFixed(1)}\n` +
@@ -98,7 +102,9 @@ export class DebugOverlay {
       `tris     ${(this.lastTriangles / 1000).toFixed(1)}k\n` +
       `tier     ${this.qualityTier}\n` +
       `scale    ${this.renderScale.toFixed(2)}x\n` +
-      `size     ${r.domElement.width}x${r.domElement.height}`;
+      `css      ${Math.round(size.x)}x${Math.round(size.y)}\n` +
+      `buffer   ${r.domElement.width}x${r.domElement.height}\n` +
+      `dpr      ${dpr.toFixed(2)} eff ${r.getPixelRatio().toFixed(2)}`;
   }
 
   dispose(): void {

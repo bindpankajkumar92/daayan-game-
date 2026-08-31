@@ -9,11 +9,25 @@
         android:supportsRtl="true"
         android:theme="@style/AppTheme">
 
+        <!--
+            screenOrientation is the *only* thing that stops the game appearing in portrait. The JS
+            ScreenOrientation.lock() in main.ts cannot do it: the activity and its WebView are already
+            created and laid out by the time any JavaScript runs, so a phone held upright showed a
+            portrait frame for the second or two the bundle took to boot and then snapped sideways.
+            Declared here, the window manager never gives the activity a portrait configuration at all.
+
+            sensorLandscape rather than landscape so the player can hold the phone either way up; both
+            are landscape, which is all the lock was ever for. It pairs with the existing
+            configChanges="orientation|screenSize", which is what keeps a 180-degree flip from
+            destroying and recreating the activity — and therefore from reloading the WebView and
+            restarting the game.
+        -->
         <activity
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode"
             android:name=".MainActivity"
             android:label="@string/title_activity_main"
             android:theme="@style/AppTheme.NoActionBarLaunch"
+            android:screenOrientation="sensorLandscape"
             android:launchMode="singleTask"
             android:exported="true">
 

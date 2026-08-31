@@ -36,3 +36,9 @@ Thumbs.db
 .env
 .env.local
 .env.*.local
+
+# Heavy assets / backups
+glb files/
+.models-backup-0.8/
+audio files/
+device-shot.png
