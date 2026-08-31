@@ -30,7 +30,7 @@
  *   is capped, because a hundred small nudges over a long session should not end up inside a wall.
  */
 
-import { Box3, Vector3, type Object3D, type PositionalAudio } from 'three';
+import { Box3, Quaternion, Vector3, type Object3D, type PositionalAudio } from 'three';
 import type { GameAudio, SoundTune } from '@/audio/AudioManager';
 import { globalBus } from '@/core/EventBus';
 import type { FPController } from '@/player/FPController';
@@ -53,8 +53,11 @@ const KNOCK_HOP = 0.02;
  * put it. The skid is what makes the sound legible — something moved — and the cap is what stops a
  * hundred small nudges from walking a bottle through a wall or off the porch.
  */
-const SKID = 0.045;
-const DRIFT_CAP = 0.14;
+const SKID = 0.075;
+const DRIFT_CAP = 0.24;
+
+/** A standing bottle falls almost flat; the last two degrees avoid a perfectly coplanar settle. */
+const TOPPLE_ANGLE = (88 * Math.PI) / 180;
 
 /**
  * Slack on the sum of the two radii before a pass counts as a bump, and how far back out the player has
@@ -78,11 +81,13 @@ interface NoiseProp {
   placed: string;
   /** The clatter. Two glass and two ceramic, and the beer bottle rolls rather than knocking. */
   sound: string;
+  /** Bottles may fall permanently on the first moving contact; plates only skid and rattle. */
+  bottle?: true;
 }
 
 const NOISE_PROPS: NoiseProp[] = [
-  { placed: 'bottle.glb', sound: 'bottle-knock.mp3' },
-  { placed: 'bottle-beer.glb', sound: 'bottle-roll.mp3' },
+  { placed: 'bottle.glb', sound: 'bottle-knock.mp3', bottle: true },
+  { placed: 'bottle-beer.glb', sound: 'bottle-roll.mp3', bottle: true },
   { placed: 'plate.glb', sound: 'plate-rattle.mp3' },
   { placed: 'plate-ceramic.glb', sound: 'plate-rattle.mp3' },
 ];
@@ -106,7 +111,14 @@ interface Live {
   x0: number;
   y0: number;
   z0: number;
-  yaw0: number;
+  /** Current resting y. It changes once when a bottle settles on its side. */
+  restY: number;
+  /** Box dimensions at placement; a bottle is upright when y is clearly its longest axis. */
+  width: number;
+  height: number;
+  depth: number;
+  bottle: boolean;
+  toppled: boolean;
   /** Accumulated skid, capped at DRIFT_CAP. */
   driftX: number;
   driftZ: number;
@@ -137,6 +149,7 @@ export function armNoiseProps(deps: NoisePropDeps): NoisePropHandles {
   const vC = new Vector3();
   const vS = new Vector3();
   const vW = new Vector3();
+  const up = new Vector3(0, 1, 0);
   const heard = new Vector3();
   const live: Live[] = [];
 
@@ -172,7 +185,12 @@ export function armNoiseProps(deps: NoisePropDeps): NoisePropHandles {
       x0: root.position.x,
       y0: root.position.y,
       z0: root.position.z,
-      yaw0: root.rotation.y,
+      restY: root.position.y,
+      width: vS.x,
+      height: vS.y,
+      depth: vS.z,
+      bottle: prop.bottle === true,
+      toppled: false,
       driftX: 0,
       driftZ: 0,
       sound: null,
@@ -218,17 +236,86 @@ export function armNoiseProps(deps: NoisePropDeps): NoisePropHandles {
     e.driftX = nx * cap;
     e.driftZ = nz * cap;
 
+    // Only a genuinely upright bottle gets the one-way fall. A bottle already authored on its side —
+    // or one this system has already toppled — uses the ordinary swivel below, as do both plates.
+    const topple =
+      e.bottle && !e.toppled && e.height > Math.max(e.width, e.depth) * 1.35;
+
+    if (topple) {
+      e.toppled = true;
+
+      // Fall away from the boot. Rotating world-up around (up × fall) carries the bottle's local up
+      // toward that horizontal direction while preserving whatever yaw the placement started with.
+      const fx = d > 1e-4 ? -dx / d : 1;
+      const fz = d > 1e-4 ? -dz / d : 0;
+      const axis = new Vector3(fz, 0, -fx).normalize();
+      const qStart = e.root.quaternion.clone();
+      const qFall = new Quaternion().setFromAxisAngle(axis, TOPPLE_ANGLE);
+      const qEnd = qFall.multiply(qStart.clone()).normalize();
+
+      // Rotating about an imported model's origin does not guarantee the new side lands on the same
+      // floor: origins are commonly at the centre, the base, or somewhere arbitrary. Measure the final
+      // box once at the future x/z, then offset y so its minimum returns exactly to the original floor.
+      const px = e.x0 + e.driftX;
+      const pz = e.z0 + e.driftZ;
+      e.root.quaternion.copy(qEnd);
+      e.root.position.set(px, e.y0, pz);
+      e.root.updateWorldMatrix(true, true);
+      box.setFromObject(e.root);
+      const settleY = e.y0 + (e.yLo - box.min.y);
+      e.root.quaternion.copy(qStart);
+      e.root.position.set(e.x0 + fromX, e.y0, e.z0 + fromZ);
+
+      tween(KNOCK_TIME * 1.35, (k) => {
+        e.root.quaternion.slerpQuaternions(qStart, qEnd, k);
+        e.root.position.x = e.x0 + fromX + (e.driftX - fromX) * k;
+        e.root.position.z = e.z0 + fromZ + (e.driftZ - fromZ) * k;
+        // A small early lift clears the base before the long side meets the floor; the settle offset
+        // handles models whose origin is not at their base.
+        e.root.position.y = e.y0 + (settleY - e.y0) * k + Math.sin(k * Math.PI) * KNOCK_HOP;
+        if (k >= 1) {
+          e.root.quaternion.copy(qEnd);
+          e.root.position.y = settleY;
+          e.restY = settleY;
+          e.rattling = false;
+          // Subsequent contacts need the fallen bottle's wider footprint and new vertical band.
+          e.root.updateWorldMatrix(true, true);
+          box.setFromObject(e.root);
+          box.getCenter(vC);
+          box.getSize(vS);
+          e.root.getWorldPosition(vW);
+          e.ox = vC.x - vW.x;
+          e.oz = vC.z - vW.z;
+          e.yLo = box.min.y;
+          e.yHi = box.max.y;
+          e.trigger = Math.max(vS.x, vS.z) * 0.5 + player.getRadius() + PAD;
+        }
+      });
+      return;
+    }
+
+    // Current resting orientation is the base. That matters after a bottle has fallen: resetting just
+    // rotation.y would decompose the quaternion and slowly stand the bottle back up on the next kick.
+    const restQ = e.root.quaternion.clone();
+    const yawQ = new Quaternion();
     tween(KNOCK_TIME, (k) => {
-      // Damped: three half-swings whose amplitude reaches zero at k = 1, which is where both curves have
-      // to end or the prop would keep the offset. `k` arrives eased, so the early swings are the fast
-      // ones. The models group carries no transform of its own, so these local writes are world moves.
-      e.root.rotation.y = e.yaw0 + Math.sin(k * Math.PI * 3) * (1 - k) * KNOCK_YAW;
-      e.root.position.y = e.y0 + Math.sin(k * Math.PI) * (1 - k) * KNOCK_HOP;
+      // Damped: three half-swings whose amplitude reaches zero at k = 1. Compose a world-y swivel onto
+      // the resting quaternion rather than assigning Euler.y, so a fallen bottle stays fallen.
+      yawQ.setFromAxisAngle(
+        up,
+        Math.sin(k * Math.PI * 3) * (1 - k) * KNOCK_YAW,
+      );
+      e.root.quaternion.copy(yawQ).multiply(restQ);
+      e.root.position.y = e.restY + Math.sin(k * Math.PI) * (1 - k) * KNOCK_HOP;
       // The skid is the one part that stays: it eases from wherever the prop already was to its new
       // resting offset and stops there.
       e.root.position.x = e.x0 + fromX + (e.driftX - fromX) * k;
       e.root.position.z = e.z0 + fromZ + (e.driftZ - fromZ) * k;
-      if (k >= 1) e.rattling = false;
+      if (k >= 1) {
+        e.root.quaternion.copy(restQ);
+        e.root.position.y = e.restY;
+        e.rattling = false;
+      }
     });
   };
 

@@ -13,6 +13,8 @@ import { buildHouseScene } from '@/scenes/HouseScene';
 import { Capacitor } from '@capacitor/core';
 import { ScreenOrientation } from '@capacitor/screen-orientation';
 import { StatusBar } from '@capacitor/status-bar';
+import { MenuLayer } from '@/ui/MenuLayer';
+import { getPref, setPref } from '@/core/Prefs';
 
 function hideLoading(): void {
   const el = document.getElementById('loading');
@@ -31,14 +33,18 @@ function hideLoading(): void {
  * losing the race costs a resize, not a launch.
  */
 const NATIVE_CHROME_TIMEOUT_MS = 1200;
+/** Gate + spawn bed should be local and fast; this only prevents a broken WebView from hanging forever. */
+const STARTUP_ASSET_TIMEOUT_MS = 8000;
+/** Optional room art gets longer, but a corrupt fetch must never permanently disable BEGIN. */
+const ALL_ASSET_TIMEOUT_MS = 25000;
 
-/** Resolves when `p` settles or `ms` elapses, whichever comes first. Never rejects. */
-function withTimeout(p: Promise<void>, ms: number): Promise<void> {
-  return new Promise<void>((resolve) => {
-    const timer = setTimeout(resolve, ms);
+/** Resolves true when `p` settles before the deadline, false when the deadline wins. Never rejects. */
+function withTimeout(p: Promise<void>, ms: number): Promise<boolean> {
+  return new Promise<boolean>((resolve) => {
+    const timer = setTimeout(() => resolve(false), ms);
     const done = (): void => {
       clearTimeout(timer);
-      resolve();
+      resolve(true);
     };
     void p.then(done, done);
   });
@@ -174,6 +180,17 @@ async function main(): Promise<void> {
   // Player + input
   const player = new FPController(engine);
   const touch = new TouchControls(player, debug);
+
+  // Restore the saved value before the first look gesture. Preferences come from storage and are
+  // therefore untrusted even though their TypeScript surface is numeric; TouchControls performs the
+  // final finite/range clamp, and an invalid stored value falls back to the shipped default here.
+  const savedSensitivity = getPref('sens');
+  touch.setSensitivity(
+    typeof savedSensitivity === 'number' && Number.isFinite(savedSensitivity)
+      ? savedSensitivity
+      : TouchControls.LOOK_DEFAULT,
+  );
+
   touch.setOnToggleDebug(() => {
     debug.setVisible(!debug.isVisible());
     globalBus.emit('debug:toggle', undefined as never);
@@ -186,17 +203,74 @@ async function main(): Promise<void> {
   debug.setQualityTier(quality.getSettings().tier);
   debug.setRenderScale(quality.getRenderScale());
 
-  // Phase 0 on-device gate: show the debug overlay by default so the user can
-  // read FPS / draws / tris / scale without having to find a corner to tap.
-  debug.setVisible(true);
+  // Debug remains available by backtick/triple-tap, but a normal player should not launch into metrics.
+  debug.setVisible(false);
 
   // Wire quality tier changes back to debug overlay.
   globalBus.on('quality:change', ({ tier }) => debug.setQualityTier(tier));
   globalBus.on('resolution:change', ({ scale }) => debug.setRenderScale(scale));
 
+  // Both menus freeze through this one bit. Rendering deliberately continues — a still view of the
+  // house behind the wash is the menu artwork — but not one simulation subsystem advances. Returning
+  // before player.move *and* scene.update is important: zero movement would stop the player but still
+  // tick the daayan, props, puzzle tweens and toast timers while the player had no controls.
+  let simulationPaused = true;
+  let gameStarted = false;
+  const setMenuVisible = (open: boolean): void => {
+    simulationPaused = open;
+    touch.setPaused(open);
+    const display = open ? 'none' : '';
+    const hud = document.getElementById('hud');
+    const crosshair = document.getElementById('crosshair');
+    if (hud) hud.style.display = display;
+    if (crosshair) crosshair.style.display = display;
+  };
+
+  const menuDeps = {
+    getSensitivity: () => touch.getSensitivity(),
+    setSensitivity: (value: number, commit: boolean): void => {
+      touch.setSensitivity(value);
+      if (commit) setPref('sens', touch.getSensitivity());
+    },
+    sensRange: { min: TouchControls.LOOK_MIN, max: TouchControls.LOOK_MAX },
+    onVisibility: setMenuVisible,
+  };
+
+  const titleMenu = new MenuLayer(
+    {
+      ...menuDeps,
+      onClose: () => {
+        gameStarted = true;
+      },
+    },
+    false,
+  );
+  titleMenu.setReady(false);
+  // Paint the title menu behind the opaque loading cover before the renderer starts. Android WebView
+  // may composite DOM layers on separate frames, so opening the menu in the same turn that fades the
+  // cover can briefly expose the WebGL canvas. Pre-opening it makes the reveal deterministic.
+  titleMenu.open();
+  const pauseMenu = new MenuLayer({ ...menuDeps, onClose: () => {} }, true);
+
+  touch.setOnPause(() => {
+    // A single key/tap dismisses the topmost UI layer only. Without this guard, the TouchControls
+    // listener sees Escape before OverlayLayer's document listener and opens pause behind the note.
+    if (scene.closeOverlay()) return;
+    // The title screen has its own BEGIN action; Esc/P must not dismiss it into an unstarted game.
+    if (!gameStarted) return;
+    if (pauseMenu.isOpen()) pauseMenu.close();
+    else pauseMenu.open();
+  });
+
   // Main loop
   const loop = new GameLoop({
     onStep: (dt) => {
+      if (simulationPaused) {
+        // Drop, do not bank, any mouse movement delivered during the frame the menu opened. Otherwise
+        // RESUME would apply it all at once and snap the camera.
+        touch.consumeLookDelta();
+        return;
+      }
       // While a note, keypad or panel is open the player stands still — and the look delta is
       // *consumed and dropped*, not left to accumulate, or closing the overlay snaps the camera
       // through however far the thumb travelled across the paper. Movement still ticks with a zero
@@ -206,6 +280,14 @@ async function main(): Promise<void> {
         player.setCrouch(false);
         player.move(0, 0, dt);
         touch.consumeLookDelta();
+      } else if (scene.isHidden()) {
+        // Hiding owns translation and eye height. Do not feed crouch here: setCrouch re-seats the eye
+        // on the floor, which would pull it out of the under-bed/wardrobe pocket. Look stays live so
+        // the player can watch the room, and scene.update still runs the INTERACT prompt used to exit.
+        player.setRun(false);
+        player.move(0, 0, dt);
+        const d = touch.consumeLookDelta();
+        if (d.yaw !== 0 || d.pitch !== 0) player.addLookDelta(d.yaw, d.pitch);
       } else {
         const m = touch.getMove();
         player.setRun(m.run);
@@ -229,10 +311,17 @@ async function main(): Promise<void> {
     onError: reportError,
   });
 
-  // Signal ready
+  // Signal ready and start rendering behind the native loading cover so texture uploads and shader
+  // compilation do not become the player's first interactive frames.
   globalBus.emit('engine:ready', undefined as never);
-  hideLoading();
   loop.start();
+
+  await withTimeout(scene.startupReady, STARTUP_ASSET_TIMEOUT_MS);
+  hideLoading();
+
+  void withTimeout(scene.allReady, ALL_ASSET_TIMEOUT_MS).then(() => {
+    titleMenu.setReady(true);
+  });
 
   // Expose handles on window for the on-device perf gate to inspect.
   (window as unknown as { __daayan: unknown }).__daayan = {

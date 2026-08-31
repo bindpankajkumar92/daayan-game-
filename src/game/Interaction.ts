@@ -15,6 +15,8 @@
 import { Vector3 } from 'three';
 import type { Engine } from '@/core/Engine';
 
+export type InteractionVerb = 'interact' | 'hide' | 'exit';
+
 export interface Interactable {
   id: string;
   /** World position of the thing's grab point — not necessarily its mesh origin. */
@@ -23,6 +25,8 @@ export interface Interactable {
   reach?: number;
   /** Prompt text, or null when this object currently offers nothing. */
   label: () => string | null;
+  /** Action word displayed on the touch button. Defaults to the generic interaction. */
+  verb?: () => InteractionVerb;
   onUse: () => void;
 }
 
@@ -59,6 +63,11 @@ export class InteractionSystem {
   /** The object the prompt is currently offering. Recomputed by `update`. */
   getCurrent(): Interactable | null {
     return this.current;
+  }
+
+  /** The action word for the currently selected object. */
+  getCurrentVerb(): InteractionVerb {
+    return this.current?.verb?.() ?? 'interact';
   }
 
   /**

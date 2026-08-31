@@ -23,10 +23,10 @@
 
 import { Box3, Group, Mesh, Vector3, type AnimationMixer, type Camera, type MeshBasicMaterial, type MeshLambertMaterial, type Object3D, type Scene } from 'three';
 import { BASE_Y } from '@/world/HouseLayout';
-import { UPPER, UPPER_DOOR, UPPER_INNER, UPPER_INNER_CUT, UP_Y, GATE } from '@/world/HouseRooms';
+import { GATE, LIVING_DOOR, UPPER, UPPER_DOOR, UPPER_INNER, UPPER_INNER_CUT, UP_Y } from '@/world/HouseRooms';
 import type { AABB } from '@/player/FPController';
 import { aabbOf } from '@/world/Fixtures';
-import { fitToHeight, playClip, type ModelLoader } from '@/world/ModelLoader';
+import { fitToBox, fitToHeight, playClip, type ModelLoader } from '@/world/ModelLoader';
 import { carveBoxes, type CarveBox } from '@/world/CarveBox';
 import { SHADOW_LIFT, SHADOW_SPREAD, shadowUnitQuad } from '@/world/ContactShadow';
 
@@ -53,8 +53,14 @@ export interface ModelPlacement {
    * the row it is copied from, since brighten() dedups on the material it lands on.
    */
   clone?: boolean;
-  /** Metres the longest axis should measure once placed. */
+  /** Metres the longest axis should measure once placed. Ignored when `fit` is present. */
   height: number;
+  /**
+   * Exact world-space dimensions for rigid panels whose source aspect ratio must not dictate the wall
+   * run they cover. `depth` is optional; omit it to retain the model's own thickness after x/y fitting.
+   * Never use on skinned art — see fitToBox.
+   */
+  fit?: { width: number; height: number; depth?: number };
   x: number;
   z: number;
   /**
@@ -385,7 +391,16 @@ export const MODEL_PLACEMENTS: ModelPlacement[] = [
   // plaster's 0.40 -- which argues for a lift on the scale the stair and the gate get, but 3.0 rendered
   // it *brighter* than the plaster behind it and the grime washed out entirely. 1.6 keeps it reading as
   // dirty masonry beside a lit wall instead of as a hole in one.
-  { name: 'wall-damaged.glb', height: 3.0, x: -4.72, z: -5.5, yaw: Math.PI / 2, collide: true, albedo: 1.6 },
+  // The requested damaged-wall scan on every solid hallway run, replacing the graffiti facing. Each
+  // fitted panel stays 5 cm inside its authoritative HouseRooms span: the south pair stop before the
+  // central arch, while the north three stop at the bedroom and living-room jambs. That small reveal is
+  // hidden by the casing/trim but prevents art from crossing a walkable opening. The procedural wall
+  // remains 1 cm behind these 10 cm facings and continues to own collision.
+  { name: 'wall-damaged.glb', id: 'hallway-wall-south-west', height: 2.99, fit: { width: 7.3, height: 2.99, depth: 0.1 }, x: -5.3, y: 0.005, z: 0.11, albedo: 1.6 },
+  { name: 'wall-damaged.glb', id: 'hallway-wall-south-east', clone: true, height: 2.99, fit: { width: 7.3, height: 2.99, depth: 0.1 }, x: 5.3, y: 0.005, z: 0.11, albedo: 1.6 },
+  { name: 'wall-damaged.glb', id: 'hallway-wall-north-west', clone: true, height: 2.99, fit: { width: 3.1, height: 2.99, depth: 0.1 }, x: -7.4, y: 0.005, z: 2.49, albedo: 1.6 },
+  { name: 'wall-damaged.glb', id: 'hallway-wall-north-middle', clone: true, height: 2.99, fit: { width: 8.3, height: 2.99, depth: 0.1 }, x: 0, y: 0.005, z: 2.49, albedo: 1.6 },
+  { name: 'wall-damaged.glb', id: 'hallway-wall-north-east', clone: true, height: 2.99, fit: { width: 3.1, height: 2.99, depth: 0.1 }, x: 7.4, y: 0.005, z: 2.49, albedo: 1.6 },
 
   // Noise prop two, standing on the corridor's north side 30 cm off the wall face, 3 m west of the
   // archway, so it is passed on every trip between the hall and the two rooms. beer_bottle is the one
@@ -403,7 +418,10 @@ export const MODEL_PLACEMENTS: ModelPlacement[] = [
   // --- Bedroom (window on the west wall at z = 6.0) ---
   // Against the west wall and north of the window, not beside the made bed HouseProps already
   // builds at (-6.2, 8.3): two beds a metre apart looked like a mistake rather than a shared room.
-  { name: 'bed.glb', height: 2.1, x: -8.26, z: 9.0, yaw: Math.PI / 2, collide: true, shadow: 1 },
+  // Startup-visible now: the player wakes on this mattress. HouseScene registers a low base collider
+  // plus a walkable mattress once the measured box exists; a full `collide` box would trap a capsule
+  // whose feet are already on top of it. `first` puts it immediately after the gate in load order.
+  { name: 'bed.glb', height: 2.1, x: -8.26, z: 9.0, yaw: Math.PI / 2, first: true, shadow: 1 },
   // Curled on the mattress. `on` reads the bed's measured top, which is the headboard rail at 0.66,
   // so y drops to the bedding at 0.47; retuning the bed still carries the cat with it.
   //
@@ -448,6 +466,12 @@ export const MODEL_PLACEMENTS: ModelPlacement[] = [
   // leaves 1.02 m of the 1.6 m opening to walk through. The leaf being narrower than the opening is
   // invisible on an ajar door, which is why BEDROOM_DOOR.half stays at 0.8 and the casing is untouched.
   { name: 'door-inner.glb', id: 'door-bedroom', clone: true, height: 2.15, x: -5.51, z: 3.05, yaw: -1.0, albedo: 2.0 },
+
+  // The living-room leaf uses the same clean imported door as the bedroom. Both openings are 1.6 x
+  // 2.1 m, so the bedroom's measured west-jamb placement carries across exactly: at 2.15 m tall the
+  // leaf is 1.074 m wide, yaw -1.0 puts its hinge on x = 4.20 / z = 2.60, and leaves 1.02 m clear to
+  // walk through. Its distinct id prevents the upper-flat interaction arm from treating it as that door.
+  { name: 'door-inner.glb', id: 'door-living', clone: true, height: 2.15, x: LIVING_DOOR.x - 0.51, z: LIVING_DOOR.z + 0.45, yaw: -1.0, albedo: 2.0 },
 
   // Noise prop three, on the bare boards between the rug (x -6.2 .. -3.8) and the wardrobe
   // (x -1.78 .. -1.12) — the one clear stretch of this floor, since five beds, a closet, two tables
@@ -746,6 +770,10 @@ export const MODEL_PLACEMENTS: ModelPlacement[] = [
 ];
 
 export interface ModelPropsHandles {
+  /** Gate and spawn bed have each either been placed or reported failed. */
+  startupReady: Promise<void>;
+  /** Every placement has either landed or reported its own failure. */
+  allReady: Promise<void>;
   update: (dt: number) => void;
   dispose: () => void;
 }
@@ -1193,6 +1221,15 @@ export function installModels(
   const placed: Placed[] = [];
   /** Measured top of each placed model, for entries that stand on one. */
   const tops = new Map<string, number>();
+  const startupPending = new Set(['gate-main.glb', 'bed.glb']);
+  let resolveStartup!: () => void;
+  const startupReady = new Promise<void>((resolve) => {
+    resolveStartup = resolve;
+  });
+  const markStartupSettled = (id: string): void => {
+    if (!startupPending.delete(id)) return;
+    if (startupPending.size === 0) resolveStartup();
+  };
   /**
    * One quad for every shadow under an imported model. They cannot be merged the way the procedural
    * ones are — these arrive over the following several seconds and are culled individually — but they
@@ -1200,7 +1237,7 @@ export function installModels(
    */
   const shadowGeo = shadowUnitQuad();
 
-  void (async () => {
+  const allReady = (async () => {
     const queue = loadOrder(MODEL_PLACEMENTS);
     for (const [i, p] of queue.entries()) {
       const id = p.id ?? p.name;
@@ -1221,12 +1258,20 @@ export function installModels(
         // just move the first one. See ModelPlacement.clone.
         const root = p.clone === true ? loaded.root.clone(true) : loaded.root;
         if (p.drop !== undefined) prune(root, p.drop);
-        if (p.yaw !== undefined) root.rotation.y = p.yaw;
         // With `on`, y is a nudge from the supporting box's top rather than an absolute height.
         const support = p.on !== undefined ? tops.get(p.on) : undefined;
         const floor = support !== undefined ? support + (p.y ?? 0) : (p.y ?? 0);
 
-        const box = fitToHeight(root, p.height, p.x, floor, p.z);
+        // Uniform-fit art takes its yaw before measurement, as it always has. Exact-fit panels size in
+        // source axes first and apply yaw inside fitToBox — otherwise a quarter-turn swaps their length
+        // and thickness while scale.x/scale.z remain local. See fitToBox.
+        let box: { width: number; depth: number; height: number };
+        if (p.fit !== undefined) {
+          box = fitToBox(root, p.fit.width, p.fit.height, p.x, floor, p.z, p.fit.depth, p.yaw);
+        } else {
+          if (p.yaw !== undefined) root.rotation.y = p.yaw;
+          box = fitToHeight(root, p.height, p.x, floor, p.z);
+        }
         tops.set(id, floor + box.height);
         root.name = id;
         // Before `albedo`, so a row may do both: the move puts the image in the slot a multiplier can
@@ -1273,11 +1318,15 @@ export function installModels(
         onPlaced?.(id, root);
       } catch (err) {
         onError(err, `model:${id}`);
+      } finally {
+        markStartupSettled(id);
       }
     }
   })();
 
   return {
+    startupReady,
+    allReady,
     update: (dt) => {
       for (const p of placed) {
         const near =

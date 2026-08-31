@@ -40,10 +40,12 @@ const HINGLISH = new Map<string, string>([
   // --- Menu and settings ---
   ['BEGIN', 'SHURU KARO'],
   ['RESUME', 'WAPAS CHALO'],
+  ['LOADING...', 'LOAD HO RAHA HAI...'],
   ['SETTINGS', 'SETTINGS'],
   ['BACK', 'PEECHE'],
   ['PAUSED', 'RUKA HUA'],
   ['The house is awake. Get out.', 'Ghar jaag gaya hai. Bahar niklo.'],
+  ['The house is waking up...', 'Ghar jaag raha hai...'],
   ['LOOK SENSITIVITY', 'DEKHNE KI SPEED'],
   ['LANGUAGE', 'BHASHA'],
   ['SLOW', 'DHEEMA'],
@@ -51,11 +53,20 @@ const HINGLISH = new Map<string, string>([
   ['Drag anywhere to look. Left stick walks.', 'Dekhne ke liye kahin bhi drag karo. Left stick se chalo.'],
   ['Tap PAUSE any time to come back here.', 'Kabhi bhi PAUSE dabao, yahin wapas aa jaoge.'],
 
-  // --- HUD verb ---
+  // --- Touch controls and HUD verbs ---
   ['INTERACT', 'CHHUO'],
+  ['HIDE', 'CHHUPO'],
+  ['EXIT', 'BAHAR'],
+  ['RUN', 'DAUDO'],
+  ['CROUCH', 'JHUKO'],
+  ['PAUSE', 'ROKO'],
+  ['Hide under the bed', 'Bed ke neeche chhupo'],
+  ['Hide inside the wardrobe', 'Almirah ke andar chhupo'],
+  ['Leave hiding place', 'Chhupne ki jagah se bahar niklo'],
 
   // --- Toasts ---
   ['You wake on the floor of the hall.', 'Tum hall ke farsh par jaagte ho.'],
+  ['You wake on a bed in the dark bedroom.', 'Tum andhere bedroom ke bed par jaagte ho.'],
   ['Three turns. The gate gives.', 'Teen baar ghumao. Gate khul jayega.'],
   ['The last bolt draws back.', 'Aakhri chatakni khul gayi.'],
   ['The candles go out.', 'Mombattiyan bujh gayin.'],
@@ -63,6 +74,27 @@ const HINGLISH = new Map<string, string>([
   ['The lid comes up.', 'Dhakkan uth gaya.'],
   ['A bolt shifts, further along the wall.', 'Deewar ke aage kahin ek chatakni sarki.'],
   ['Cold air. There is a doorway behind it.', 'Thandi hawa. Peeche ek darwaza hai.'],
+
+  // --- Puzzle overlays ---
+  ['Four digits.', 'Chaar ank daalo.'],
+  ['The dial does not turn.', 'Dial nahi ghoomta.'],
+  ['CLR', 'SAAF'],
+  ['ON', 'CHALU'],
+  ['OFF', 'BAND'],
+  ['PULL MAIN LEVER', 'MAIN LEVER KHINCHO'],
+  ['A hard snap, and the breakers fall back.', 'Zor se jhatka lagta hai, aur saare breaker wapas gir jaate hain.'],
+  ['Tap outside to put it back', 'Wapas rakhne ke liye bahar tap karo'],
+  ['A strongbox', 'Ek mazboot sandook'],
+  ['Four figures on a brass dial', 'Peetal ke dial par chaar ank'],
+  ['Sub-panel', 'Chhota panel'],
+  ['Four breakers, and a main lever', 'Chaar breaker aur ek main lever'],
+
+  // --- Ending ---
+  ['Outside', 'Bahar'],
+  ['The gate stands open behind you', 'Gate tumhare peeche khula khada hai'],
+  ['The cold is real, and the fog is real, and the road is somewhere ahead of you in it.', 'Thand asli hai, dhund asli hai, aur raasta isi mein kahin aage hai.'],
+  ['Behind you the house has gone quiet. The twelfth nail is still empty.', 'Tumhare peeche ghar chup ho gaya hai. Baarahvi keel ab bhi khaali hai.'],
+  ['Walk', 'CHALO'],
 
   // --- Interaction prompts (Clues.ts) ---
   ['Read the pinned note', 'Chipki hui parchi padho'],

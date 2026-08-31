@@ -254,19 +254,6 @@ function living({ b, m, aabbs, at }: Ctx): void {
   }
   aabbs.push(aabbOf(2.0, 0, 7.05, 0.26, 0.3, 0.5));
 
-  // Bookshelf. Books, and the gaps where books have been taken down to the cellar.
-  b.box(m.wood, 1.7, 1.9, 0.36, 4.2, 0.95, 2.92);
-  let s = 3;
-  for (const sy of [0.44, 0.88, 1.32, 1.76]) {
-    b.box(m.wood, 1.6, 0.04, 0.32, 4.2, sy, 2.92);
-    for (let i = 0; i < 9; i++) {
-      s = (s * 37 + 11) % 101;
-      if (s % 7 === 0) continue;
-      b.box(s % 3 ? m.door : m.cloth, 0.11, 0.24 + (s % 4) * 0.02, 0.22, 3.52 + i * 0.17, sy + 0.14, 2.9);
-    }
-  }
-  aabbs.push(aabbOf(4.2, 0, 2.92, 0.86, 0.19, 1.9));
-
   b.box(m.cloth, 2.8, 0.02, 2.8, 6.2, 0.011, 5.0);
 
   // Standing lamp, cold like everything else.

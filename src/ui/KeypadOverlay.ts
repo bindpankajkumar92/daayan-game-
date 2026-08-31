@@ -12,6 +12,7 @@
  */
 
 import { OverlayLayer, overlayButton, overlayTitle } from './OverlayLayer';
+import { localize } from '@/ui/Strings';
 
 export interface KeypadOptions {
   title: string;
@@ -25,7 +26,11 @@ export function showKeypad(layer: OverlayLayer, opts: KeypadOptions): void {
   let entry = '';
 
   layer.show((content) => {
-    content.appendChild(opts.sub === undefined ? overlayTitle(opts.title) : overlayTitle(opts.title, opts.sub));
+    content.appendChild(
+      opts.sub === undefined
+        ? overlayTitle(localize(opts.title))
+        : overlayTitle(localize(opts.title), localize(opts.sub)),
+    );
 
     const display = document.createElement('div');
     display.style.cssText = `
@@ -60,14 +65,14 @@ export function showKeypad(layer: OverlayLayer, opts: KeypadOptions): void {
 
     const submit = (): void => {
       if (entry.length < 4) {
-        status.textContent = 'Four digits.';
+        status.textContent = localize('Four digits.');
         return;
       }
       if (opts.onSubmit(entry)) {
         layer.close();
         return;
       }
-      status.textContent = 'The dial does not turn.';
+      status.textContent = localize('The dial does not turn.');
       entry = '';
       render();
     };
@@ -88,7 +93,7 @@ export function showKeypad(layer: OverlayLayer, opts: KeypadOptions): void {
       pad.appendChild(overlayButton(d, () => press(d)));
     }
     pad.appendChild(
-      overlayButton('CLR', () => {
+      overlayButton(localize('CLR'), () => {
         entry = '';
         status.textContent = '';
         render();

@@ -14,6 +14,7 @@ import {
   BoxGeometry,
   CylinderGeometry,
   Group,
+  Matrix4,
   Mesh,
   MeshBasicMaterial,
   MeshLambertMaterial,
@@ -21,8 +22,11 @@ import {
   SphereGeometry,
   TorusGeometry,
   Vector3,
+  type BufferGeometry,
   type Material,
+  type Object3D,
 } from 'three';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import type { AABB } from '@/player/FPController';
 import { makeContactShadowMaterial, makeContactShadowTexture } from '@/world/ContactShadow';
 
@@ -92,6 +96,68 @@ export function disposeGroup(g: Group): void {
   });
 }
 
+/**
+ * Merge every non-preserved mesh below `root` into one mesh per material, in `root` local space.
+ *
+ * Fixtures are assembled from small primitives because that makes their dimensions and animation
+ * handles readable, but leaving every primitive as a Mesh made the fixture group roughly 150 draw
+ * calls. The important distinction is not "interactive versus static": a door or shelf may move as
+ * a whole and its children can still be merged safely. What must remain separate are subtrees with an
+ * independently animated handle — a bolt, lid, key or flame. Passing those roots in `preserve` skips
+ * the whole subtree while everything else is baked relative to `root`.
+ *
+ * Source geometries in this module are unique to their mesh, so they are disposed as soon as their
+ * transformed copies have been merged. The merged buffers remain under `root` and are released by the
+ * scene's normal disposeGroup traversal.
+ */
+function mergeStaticChildren(root: Group, preserve: readonly Object3D[] = []): void {
+  const keep = new Set<Object3D>(preserve);
+  const buckets = new Map<Material, BufferGeometry[]>();
+  const remove: Mesh[] = [];
+  const invRoot = new Matrix4();
+  const relative = new Matrix4();
+
+  root.updateWorldMatrix(true, true);
+  invRoot.copy(root.matrixWorld).invert();
+
+  const visit = (node: Object3D): void => {
+    if (keep.has(node)) return;
+    if ((node as Mesh).isMesh) {
+      const mesh = node as Mesh;
+      // Fixture primitives always carry one material. If that changes, leaving the mesh separate is
+      // safer than flattening its geometry groups into the wrong material slots.
+      if (Array.isArray(mesh.material)) return;
+      relative.multiplyMatrices(invRoot, mesh.matrixWorld);
+      const baked = mesh.geometry.clone().applyMatrix4(relative);
+      let list = buckets.get(mesh.material);
+      if (list === undefined) {
+        list = [];
+        buckets.set(mesh.material, list);
+      }
+      list.push(baked);
+      remove.push(mesh);
+      return;
+    }
+    for (const child of node.children) visit(child);
+  };
+
+  for (const child of root.children) visit(child);
+  for (const mesh of remove) {
+    mesh.removeFromParent();
+    mesh.geometry.dispose();
+  }
+
+  let i = 0;
+  for (const [material, geos] of buckets) {
+    const merged = mergeGeometries(geos, false);
+    for (const geo of geos) geo.dispose();
+    if (merged === null) continue;
+    const mesh = new Mesh(merged, material);
+    mesh.name = `${root.name || 'fixture'}:batch:${i++}`;
+    root.add(mesh);
+  }
+}
+
 export interface CasingSpec {
   x: number;
   z: number;
@@ -127,6 +193,7 @@ export function makeCasing(mats: FixtureMats, s: CasingSpec): Group {
     g.add(boxMesh(mats.wood, t, 0.12, s.half * 2, s.x, s.y1 - 0.06, s.z));
     if (s.y0 > 0.02) g.add(boxMesh(mats.wood, t + 0.16, 0.1, s.half * 2, s.x, s.y0 + 0.05, s.z));
   }
+  mergeStaticChildren(g);
   return g;
 }
 
@@ -170,6 +237,8 @@ export function makeDoorLeaf(
   for (const hy of [0.4, h - 0.4]) {
     pivot.add(boxMesh(mats.brass, 0.05, 0.12, 0.03, -hingeSide * 0.03, hy, 0.05));
   }
+  // The pivot is what moves; every child is rigidly attached to it, so one mesh per material is safe.
+  mergeStaticChildren(pivot);
   return { pivot, openAngle: openAngle * -hingeSide };
 }
 
@@ -211,6 +280,8 @@ export function makeGate(mats: FixtureMats, x: number, z: number): BuiltGate {
     lockAnchors.push(new Vector3(x, ly, z + 0.4));
   }
 
+  // The brass bolts slide independently when their keys turn; plates and hasps do not.
+  mergeStaticChildren(group, bolts);
   return { group, bolts, lockAnchors };
 }
 
@@ -346,6 +417,9 @@ export function makeAltar(
   key.visible = false;
   group.add(key);
 
+  // Flames toggle individually, the compartment lid rotates, and the key is revealed later. Everything
+  // else is rigid altar dressing and may collapse to one draw per material.
+  mergeStaticChildren(group, [...flames, lid, key]);
   return {
     group,
     symbolAnchors,
@@ -400,6 +474,8 @@ export function makeCodeBox(mats: FixtureMats, x: number, y: number, z: number):
   key.visible = false;
   group.add(key);
 
+  // Body and dial never move. The lid hinges and the key appears independently.
+  mergeStaticChildren(group, [lid, key]);
   return {
     group,
     lid,
@@ -457,6 +533,8 @@ export function makeBreakerPanel(
   key.visible = false;
   group.add(key);
 
+  // Panel housing and rocker stubs are rigid. The hatch and key have their own animation state.
+  mergeStaticChildren(group, [lid, key]);
   return {
     group,
     lid,
@@ -510,6 +588,8 @@ export function makeShelf(mats: FixtureMats, x: number, z: number, floorY: numbe
     }
   }
 
+  // The scene slides the whole group aside; no child has independent motion.
+  mergeStaticChildren(group);
   return {
     group,
     aabb: aabbOf(x, floorY, z, 0.34, D / 2, floorY + H),
@@ -569,5 +649,7 @@ export function makeClock(
   hub.rotation.x = Math.PI / 2;
   hub.position.z = 0.05;
   group.add(hub);
+  // The hands show a fixed clue and never tick, so the whole clock is one rigid fixture.
+  mergeStaticChildren(group);
   return group;
 }

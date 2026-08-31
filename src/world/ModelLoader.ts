@@ -257,6 +257,56 @@ export function fitToHeight(
   return { width: size.x, depth: size.z, height: size.y };
 }
 
+/**
+ * Non-uniformly fit a rigid model to an exact world-space box, then centre and seat it.
+ *
+ * Wall scans are the motivating case: fitting by longest axis preserves their source aspect ratio,
+ * but a 30 m scan cannot cover a 3.2 m and an 8.4 m run at the same height without either leaving a
+ * gap or stretching across a doorway. Here each requested dimension is independent. Omitted depth
+ * retains the source's scaled thickness, which avoids turning a 6 cm facing into a 20 cm collider.
+ *
+ * This must not be used on skinned/animated art: non-uniform root scale changes bone proportions.
+ */
+export function fitToBox(
+  root: Object3D,
+  width: number,
+  height: number,
+  x: number,
+  y: number,
+  z: number,
+  depth?: number,
+  yaw?: number,
+): { width: number; depth: number; height: number } {
+  // Size in the asset's authored orientation first. Applying yaw before these ratios would make a 90°
+  // panel turn swap world x/z while scale.x/scale.z stay local, so the length ratio would be applied to
+  // the thickness axis and vice versa.
+  root.updateWorldMatrix(false, true);
+  // Exact-fit is the rare path where the cheap transformed geometry AABB is not good enough. The
+  // double-door source carries rotated wrapper matrices: transforming its local AABB reported 2.19 m
+  // high while the rendered vertices occupied 1.75 m, so a nominal 2.1 m fit visibly landed at 1.68 m.
+  // `precise=true` walks the rigid vertices once at load time (never per frame) and makes "exact" true.
+  box.setFromObject(root, true);
+  box.getSize(size);
+  root.scale.x *= size.x > 1e-6 ? width / size.x : 1;
+  root.scale.y *= size.y > 1e-6 ? height / size.y : 1;
+  if (depth !== undefined) root.scale.z *= size.z > 1e-6 ? depth / size.z : 1;
+  if (yaw !== undefined) root.rotation.y = yaw;
+
+  // Rotation can move an eccentric source far from its previous centre, so only now place the final
+  // world AABB. Precise again: the return value feeds tops/shadows and must describe rendered vertices,
+  // not the loose transformed source box.
+  root.updateWorldMatrix(false, true);
+  box.setFromObject(root, true);
+  box.getSize(size);
+  box.getCenter(centre);
+  root.position.set(
+    root.position.x + (x - centre.x),
+    root.position.y + (y - box.min.y),
+    root.position.z + (z - centre.z),
+  );
+  return { width: size.x, depth: size.z, height: size.y };
+}
+
 /** Start `clip` looping on `root`. The caller must tick the returned mixer. */
 export function playClip(root: Object3D, clip: AnimationClip, speed = 1): AnimationMixer {
   const mixer = new AnimationMixer(root);

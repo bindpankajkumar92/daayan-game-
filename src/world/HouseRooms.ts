@@ -193,8 +193,15 @@ export const UPPER_PATCH = {
   ],
 };
 
-/** Where the player wakes up: in the hall, facing the locked gate. */
-export const SPAWN = { x: 0, y: 1.7, z: -3.6, yaw: 0 };
+/**
+ * Where the player wakes: on the north-west bedroom's imported bed, near its foot and clear of the
+ * curled cat. The y here is the measured mattress (0.47 m) plus the standing eye height; HouseScene
+ * replaces it with the model's exact fitted value as soon as bed.glb lands.
+ *
+ * yaw -0.45 faces diagonally toward the bedroom door rather than into the west wall or straight at the
+ * headboard, so the first frame immediately shows a way out of the room.
+ */
+export const SPAWN = { x: -8.26, y: 2.17, z: 8.05, yaw: -0.45 };
 
 // --- Stairs ---
 /** Top landing, flat, just outside the cellar door. */

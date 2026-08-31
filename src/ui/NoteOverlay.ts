@@ -12,6 +12,7 @@
  */
 
 import { OverlayLayer, overlayTitle } from './OverlayLayer';
+import { localize } from '@/ui/Strings';
 
 export type NoteStyle = 'diary' | 'note' | 'book' | 'photo' | 'diagram';
 
@@ -36,7 +37,11 @@ const BODY_CSS: Record<NoteStyle, string> = {
 export function showNote(layer: OverlayLayer, doc: NoteDoc, onClosed?: () => void): void {
   const style: NoteStyle = doc.style ?? 'note';
   layer.show((content) => {
-    content.appendChild(doc.sub === undefined ? overlayTitle(doc.title) : overlayTitle(doc.title, doc.sub));
+    content.appendChild(
+      doc.sub === undefined
+        ? overlayTitle(localize(doc.title))
+        : overlayTitle(localize(doc.title), localize(doc.sub)),
+    );
 
     if (doc.draw) {
       const w = 460;
@@ -58,7 +63,7 @@ export function showNote(layer: OverlayLayer, doc: NoteDoc, onClosed?: () => voi
       const p = document.createElement('p');
       p.style.cssText = 'margin: 0 0 0.7em;';
       // An empty string is a deliberate paragraph break in the source text.
-      p.textContent = line;
+      p.textContent = localize(line);
       if (line === '') p.style.height = '0.4em';
       body.appendChild(p);
     }
@@ -66,7 +71,7 @@ export function showNote(layer: OverlayLayer, doc: NoteDoc, onClosed?: () => voi
 
     const hint = document.createElement('div');
     hint.style.cssText = 'margin-top: 10px; font: 400 10px/1.4 ui-monospace, monospace; color: rgba(230,223,210,0.32);';
-    hint.textContent = 'Tap outside to put it back';
+    hint.textContent = localize('Tap outside to put it back');
     content.appendChild(hint);
   }, onClosed);
 }

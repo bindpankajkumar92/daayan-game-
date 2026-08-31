@@ -83,6 +83,7 @@ export class MenuLayer {
   // Assigned inside the constructor via the build* helpers, which TS cannot see through — hence the
   // definite-assignment assertions rather than null-and-cast at every use.
   private root!: HTMLDivElement;
+  private sheet!: HTMLStyleElement;
   private primaryBtn!: HTMLButtonElement;
   private subtext!: HTMLDivElement;
   private settingsBtn!: HTMLButtonElement;
@@ -90,9 +91,16 @@ export class MenuLayer {
   private slider!: HTMLDivElement;
   private sliderThumb!: HTMLDivElement;
   private sliderValue!: HTMLSpanElement;
+  /** Retained because these words also change while the settings panel is already open. */
+  private sensitivityHeading!: HTMLSpanElement;
+  private slowLabel!: HTMLSpanElement;
+  private fastLabel!: HTMLSpanElement;
+  private languageHeading!: HTMLDivElement;
   private langButtons = new Map<Lang, HTMLButtonElement>();
 
   private visible = false;
+  private ready = true;
+  private settingsOpen = false;
   private rafId = 0;
   private dragging = false;
   private dragPointerId: number | null = null;
@@ -106,7 +114,13 @@ export class MenuLayer {
     this.root.id = isPause ? 'pause-layer' : 'menu-layer';
     this.root.style.cssText = `
       position: fixed; inset: 0; z-index: ${Z};
-      display: none; pointer-events: auto; touch-action: none;
+      display: none; place-items: center; pointer-events: auto; touch-action: pan-y;
+      box-sizing: border-box;
+      padding:
+        calc(12px + env(safe-area-inset-top, 0px))
+        calc(12px + env(safe-area-inset-right, 0px))
+        calc(12px + env(safe-area-inset-bottom, 0px))
+        calc(12px + env(safe-area-inset-left, 0px));
       background:
         radial-gradient(ellipse at 50% 38%, rgba(24,14,6,0.22) 0%, rgba(6,4,3,0.58) 58%, rgba(0,0,0,0.88) 100%),
         rgba(4,3,3,0.80);
@@ -115,12 +129,28 @@ export class MenuLayer {
     `;
     document.body.appendChild(this.root);
 
+    this.sheet = document.createElement('style');
+    this.sheet.textContent = `
+      #${this.root.id} .menu-action {
+        -webkit-appearance: none; appearance: none; min-height: 44px;
+        -webkit-tap-highlight-color: transparent;
+      }
+      #${this.root.id} .menu-action:active:not(:disabled) {
+        transform: scale(0.97); filter: brightness(1.28);
+      }
+      #${this.root.id} .menu-action:focus-visible {
+        outline: 2px solid rgba(255, 215, 155, 0.92); outline-offset: 3px;
+      }
+      #${this.root.id} .menu-action:disabled { pointer-events: none; }
+    `;
+    document.head.appendChild(this.sheet);
+
     const col = document.createElement('div');
     col.style.cssText = `
-      position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
-      width: min(88vw, 560px);
-      display: grid; grid-template-columns: 1fr 1fr; column-gap: 26px;
-      align-items: start;
+      position: relative; width: min(88vw, 560px); max-width: 100%; max-height: 100%;
+      display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); column-gap: 26px;
+      align-items: start; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain;
+      touch-action: pan-y; scrollbar-width: thin; scrollbar-color: rgba(255,205,150,0.28) transparent;
     `;
     this.root.appendChild(col);
 
@@ -146,12 +176,14 @@ export class MenuLayer {
     left.appendChild(this.subtext);
 
     this.primaryBtn = document.createElement('button');
+    this.primaryBtn.className = 'menu-action menu-primary';
     this.primaryBtn.style.cssText = `
       width: 100%; padding: 16px 0; border-radius: 4px; cursor: pointer; touch-action: none;
       ${PRIMARY_CSS}
     `;
     this.primaryBtn.addEventListener('click', (e) => {
       e.preventDefault();
+      if (!this.ready) return;
       this.deps.onClose();
       this.close();
     });
@@ -163,17 +195,24 @@ export class MenuLayer {
     col.appendChild(right);
 
     this.settingsBtn = document.createElement('button');
+    this.settingsBtn.className = 'menu-action';
     this.settingsBtn.style.cssText = `
       width: 100%; padding: 12px 0; border-radius: 4px; cursor: pointer; touch-action: none;
       ${PANEL_CSS}
     `;
     this.settingsBtn.addEventListener('click', (e) => {
       e.preventDefault();
-      this.settingsPanel.style.display = this.settingsPanel.style.display === 'flex' ? 'none' : 'flex';
+      this.settingsOpen = !this.settingsOpen;
+      this.settingsPanel.style.display = this.settingsOpen ? 'flex' : 'none';
+      this.settingsBtn.setAttribute('aria-expanded', String(this.settingsOpen));
+      this.render();
     });
+    this.settingsBtn.setAttribute('aria-expanded', 'false');
     right.appendChild(this.settingsBtn);
 
     this.settingsPanel = document.createElement('div');
+    this.settingsPanel.id = `${this.root.id}-settings`;
+    this.settingsBtn.setAttribute('aria-controls', this.settingsPanel.id);
     this.settingsPanel.style.cssText = `
       display: none; flex-direction: column; gap: 16px; padding: 14px;
       border-radius: 4px; background: rgba(0,0,0,0.45);
@@ -207,10 +246,16 @@ export class MenuLayer {
     return this.visible;
   }
 
+  setReady(ready: boolean): void {
+    if (this.ready === ready) return;
+    this.ready = ready;
+    this.render();
+  }
+
   open(): void {
     if (this.visible) return;
     this.visible = true;
-    this.root.style.display = 'block';
+    this.root.style.display = 'grid';
     this.startFlicker();
     this.render();
     this.deps.onVisibility(true);
@@ -237,6 +282,7 @@ export class MenuLayer {
     window.removeEventListener('pointermove', this.onSliderMove);
     window.removeEventListener('pointerup', this.onSliderUp);
     window.removeEventListener('pointercancel', this.onSliderUp);
+    this.sheet.remove();
     this.root.remove();
   }
 
@@ -248,13 +294,13 @@ export class MenuLayer {
 
     const head = document.createElement('div');
     head.style.cssText = 'display: flex; justify-content: space-between; align-items: baseline;';
-    const lab = document.createElement('span');
-    lab.style.cssText =
+    this.sensitivityHeading = document.createElement('span');
+    this.sensitivityHeading.style.cssText =
       'font: 600 11px/1 ui-monospace, monospace; letter-spacing: 0.10em; color: rgba(230,223,210,0.72);';
-    lab.textContent = localize('LOOK SENSITIVITY');
+    this.sensitivityHeading.textContent = localize('LOOK SENSITIVITY');
     this.sliderValue = document.createElement('span');
     this.sliderValue.style.cssText = 'font-size: 10px; color: rgba(230,223,210,0.45);';
-    head.appendChild(lab);
+    head.appendChild(this.sensitivityHeading);
     head.appendChild(this.sliderValue);
     row.appendChild(head);
 
@@ -303,12 +349,12 @@ export class MenuLayer {
     const scale = document.createElement('div');
     scale.style.cssText =
       'display: flex; justify-content: space-between; font-size: 9px; color: rgba(230,223,210,0.40); letter-spacing: 0.12em;';
-    const lo = document.createElement('span');
-    lo.textContent = localize('SLOW');
-    const hi = document.createElement('span');
-    hi.textContent = localize('FAST');
-    scale.appendChild(lo);
-    scale.appendChild(hi);
+    this.slowLabel = document.createElement('span');
+    this.slowLabel.textContent = localize('SLOW');
+    this.fastLabel = document.createElement('span');
+    this.fastLabel.textContent = localize('FAST');
+    scale.appendChild(this.slowLabel);
+    scale.appendChild(this.fastLabel);
     row.appendChild(scale);
 
     this.settingsPanel.appendChild(row);
@@ -369,18 +415,19 @@ export class MenuLayer {
   private buildLanguageRow(): void {
     const wrap = document.createElement('div');
     wrap.style.cssText = 'display: flex; flex-direction: column; gap: 6px;';
-    const lab = document.createElement('div');
-    lab.style.cssText =
+    this.languageHeading = document.createElement('div');
+    this.languageHeading.style.cssText =
       'font: 600 11px/1 ui-monospace, monospace; letter-spacing: 0.10em; color: rgba(230,223,210,0.72);';
-    lab.textContent = localize('LANGUAGE');
-    wrap.appendChild(lab);
+    this.languageHeading.textContent = localize('LANGUAGE');
+    wrap.appendChild(this.languageHeading);
 
     const row = document.createElement('div');
     row.style.cssText = 'display: flex; gap: 8px;';
     for (const l of LANGS) {
       const b = document.createElement('button');
-      // Each option is labelled in its own language, always — an ENGLISH row labelled "अंग्रेज़ी"
-      // would beunreadable to the player who needs it, and the reverse for HINGLISH.
+      b.className = 'menu-action';
+      // Each option is labelled in its own language, always — an English option translated into the
+      // current language would be unreadable to the player who needs it, and vice versa.
       b.style.cssText = `
         flex: 1; padding: 10px 0; border-radius: 3px; cursor: pointer; touch-action: none;
         ${PANEL_CSS}
@@ -425,11 +472,23 @@ export class MenuLayer {
 
   /** Text and state only — every style string was written once in the constructor. See the header. */
   private render(): void {
-    this.primaryBtn.textContent = localize(this.isPause ? 'RESUME' : 'BEGIN');
+    const primary = this.isPause ? 'RESUME' : this.ready ? 'BEGIN' : 'LOADING...';
+    this.primaryBtn.textContent = localize(primary);
+    this.primaryBtn.disabled = !this.ready;
+    this.primaryBtn.style.cursor = this.ready ? 'pointer' : 'wait';
+    this.primaryBtn.style.opacity = this.ready ? '1' : '0.58';
     this.subtext.textContent = localize(
-      this.isPause ? 'Tap PAUSE any time to come back here.' : 'The house is awake. Get out.',
+      this.isPause
+        ? 'Tap PAUSE any time to come back here.'
+        : this.ready
+          ? 'The house is awake. Get out.'
+          : 'The house is waking up...',
     );
-    this.settingsBtn.textContent = localize('SETTINGS');
+    this.settingsBtn.textContent = localize(this.settingsOpen ? 'BACK' : 'SETTINGS');
+    this.sensitivityHeading.textContent = localize('LOOK SENSITIVITY');
+    this.slowLabel.textContent = localize('SLOW');
+    this.fastLabel.textContent = localize('FAST');
+    this.languageHeading.textContent = localize('LANGUAGE');
 
     const v = this.deps.getSensitivity();
     this.sliderThumb.style.left = `${(sensToFraction(v, this.deps.sensRange.min, this.deps.sensRange.max) * 100).toFixed(2)}%`;

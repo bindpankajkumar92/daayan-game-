@@ -157,6 +157,10 @@ const PLAN = {
   'beer_bottle.glb': { out: 'bottle-beer.glb', ratio: 0.6, error: 0.006 },
   'bottle.glb': { out: 'bottle.glb' },
   'old_ceramic_plate.glb': { out: 'plate-ceramic.glb' },
+  // Photogrammetry hallway facing: 49.7k triangles on an almost-flat wall. The texture/normal maps carry
+  // the graffiti and mortar; keeping a quarter of the scan is still denser than damaged_wall's full
+  // 2.2k triangles while avoiding the raw mesh cost on every pass through the corridor.
+  'graffiti_wall_mendlak_brno.glb': { out: 'wall-graffiti.glb', ratio: 0.25, error: 0.012 },
 };
 
 /** Triangles across every primitive, so the reduction is reported rather than assumed. */

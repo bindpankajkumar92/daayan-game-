@@ -21,6 +21,7 @@
 
 import {
   AmbientLight,
+  Box3,
   Color,
   DirectionalLight,
   FogExp2,
@@ -72,6 +73,7 @@ import { armUpperDoor } from '@/world/UpperDoor';
 import { armInnerDoor } from '@/world/InnerDoor';
 import { hingeMainGate } from '@/world/MainGate';
 import { armNoiseProps, type NoisePropHandles } from '@/world/NoiseProps';
+import { armHiding } from '@/world/Hiding';
 import { installAudio } from '@/audio/AudioManager';
 import { installFootsteps } from '@/audio/Footsteps';
 import { installCat } from '@/world/CatRoamer';
@@ -90,11 +92,20 @@ import { OverlayLayer, overlayButton, overlayTitle } from '@/ui/OverlayLayer';
 import { showNote } from '@/ui/NoteOverlay';
 import { showKeypad } from '@/ui/KeypadOverlay';
 import { showSwitchPanel } from '@/ui/SwitchPanelOverlay';
+import { localize } from '@/ui/Strings';
 
 export interface HouseSceneHandles {
   update: (dt: number) => void;
+  /** Gate and spawn bed are ready (or their individual failures were reported). */
+  startupReady: Promise<void>;
+  /** All imported models have settled, so gameplay will not decode art in the background. */
+  allReady: Promise<void>;
   /** True while a note, keypad or panel is open, so the loop can hold the player still. */
   overlayOpen: () => boolean;
+  /** Close the active note/puzzle layer. Returns true only when it consumed an open overlay. */
+  closeOverlay: () => boolean;
+  /** Hiding locks translation but deliberately leaves look and INTERACT live. */
+  isHidden: () => boolean;
   dispose: () => void;
 }
 
@@ -152,6 +163,24 @@ export function buildHouseScene(
 
   const aabbs: AABB[] = [...house.aabbs, ...props.aabbs];
   const floors: FloorRect[] = [...house.floors];
+  /**
+   * A provisional mattress under the new spawn while bed.glb is in flight.
+   *
+   * Imported models load asynchronously, but the controller starts synchronously. Without this small
+   * surface its first gravity step sees only the bedroom floor at y=0 and drops the player through the
+   * not-yet-loaded bed before the title menu has even been dismissed. The placement hook below mutates
+   * this same object to the fitted model's exact footprint/top, because FPController holds `floors` by
+   * reference. 0.47 is the mattress measured when the row was authored (the headboard is 0.19 m above
+   * it); it is a boot-time fallback, not a second permanent source of truth.
+   */
+  const spawnMattress: FloorRect = {
+    x0: SPAWN.x - 0.48,
+    x1: SPAWN.x + 0.48,
+    z0: SPAWN.z - 0.45,
+    z1: SPAWN.z + 1.45,
+    y: SPAWN.y - 1.7,
+  };
+  floors.push(spawnMattress);
 
   // Everything interactive goes in one group so disposal is one traversal.
   const fixtures = new Group();
@@ -226,7 +255,7 @@ export function buildHouseScene(
   // still built here — the import is a leaf, not a frame — so only the procedural leaf goes, or the two
   // would stand in one doorway.
   const doorLeaves: Array<[number, -1 | 1, number]> = [
-    [3, 1, 1.0],
+    // Casing 3 (LIVING_DOOR) uses the imported `door-living` leaf, not a generated one.
     [4, -1, 1.15],
     [5, 1, 1.25],
   ];
@@ -265,6 +294,14 @@ export function buildHouseScene(
   hud.setKeySlots(LOCK_KEYS);
   const overlay = new OverlayLayer();
   const interact = new InteractionSystem(engine);
+  const hiding = armHiding({ player: controller, interact });
+  // The bedroom's procedural wardrobe exists synchronously, unlike the imported closet. Register its
+  // authored box now; imported beds and closet-old.glb join through the model-placement hook below.
+  hiding.addBox(
+    'bedroom-wardrobe',
+    'wardrobe',
+    new Box3(new Vector3(-1.78, 0, 5.84), new Vector3(-1.12, 2.05, 7.36)),
+  );
   const tweens: Tween[] = [];
   const tween = (dur: number, apply: (k: number) => void): void => {
     tweens.push({ t: 0, dur, apply });
@@ -508,7 +545,7 @@ export function buildHouseScene(
     state.escape();
     hud.setPrompt(null);
     overlay.show((content) => {
-      content.appendChild(overlayTitle('Outside', 'The gate stands open behind you'));
+      content.appendChild(overlayTitle(localize('Outside'), localize('The gate stands open behind you')));
       const body = document.createElement('div');
       body.style.cssText = 'font: italic 400 15px/1.75 Georgia, serif; color: #ddd2bd;';
       for (const line of [
@@ -517,12 +554,12 @@ export function buildHouseScene(
       ]) {
         const p = document.createElement('p');
         p.style.cssText = 'margin: 0 0 0.7em;';
-        p.textContent = line;
+        p.textContent = localize(line);
         body.appendChild(p);
       }
       content.appendChild(body);
       content.appendChild(
-        overlayButton('Walk', () => overlay.close(), 'width: 100%; margin-top: 8px;'),
+        overlayButton(localize('Walk'), () => overlay.close(), 'width: 100%; margin-top: 8px;'),
       );
     });
   };
@@ -534,9 +571,12 @@ export function buildHouseScene(
   controller.setFloors(floors);
   controller.warpTo(new Vector3(SPAWN.x, SPAWN.y, SPAWN.z), SPAWN.yaw);
   touch.setOnInteract(() => {
-    if (!overlay.isOpen()) interact.use();
+    // INTERACT is also the fastest keyboard way out of a puzzle. Consume the topmost layer first so
+    // the same E press cannot hit the world behind it; a press that opens a layer ends here as well.
+    if (overlay.isOpen()) overlay.close();
+    else interact.use();
   });
-  hud.showToast('You wake on the floor of the hall.', 4.0);
+  hud.showToast('You wake on a bed in the dark bedroom.', 4.0);
 
   // --- Imported art ---
   // Started after setAabbs on purpose: these load over several frames and push their colliders into
@@ -555,6 +595,51 @@ export function buildHouseScene(
   // units and those only mean anything once her fit has written the root scale.
   const models = installModels(modelLoader, scene, engine.camera, aabbs, fx.shadow, reportError, (name, root) => {
     if (name === 'daayan.glb') armDaayan(modelLoader, root, reportError);
+    if (name === 'bed.glb') {
+      root.updateWorldMatrix(true, true);
+      const bedBox = new Box3().setFromObject(root);
+      /**
+       * The headboard is 19 cm above the bedding in the fitted model. Box3.maxY is therefore not a
+       * walkable top — using it would float the player on the top rail. This offset is already encoded
+       * in the cat's `on: bed.glb, y: -0.19` placement; repeating the measured art fact here makes the
+       * player's feet and the cat agree on which surface is the mattress.
+       */
+      const mattressY = bedBox.max.y - 0.19;
+      const inset = 0.06;
+      spawnMattress.x0 = bedBox.min.x + inset;
+      spawnMattress.x1 = bedBox.max.x - inset;
+      spawnMattress.z0 = bedBox.min.z + inset;
+      spawnMattress.z1 = bedBox.max.z - inset;
+      spawnMattress.y = mattressY;
+
+      // The normal `collide:true` placement box was removed from this bed: a full-height AABB would
+      // overlap a capsule whose feet are on the mattress and lock the spawn in place. A base ending at
+      // the mattress blocks walking through the bed from the floor, while FPController deliberately
+      // ignores colliders whose max is at or below the player's feet when they stand on top.
+      // Inset the base by the capsule radius. The capsule still meets the visible bed edge from the
+      // floor, but after its centre leaves the mattress it no longer overlaps the base while gravity
+      // lowers it. A full-footprint box traps the player permanently at that transition: the feet drop
+      // to floor level while the capsule's trailing edge is still over the bed.
+      const baseInset = controller.getRadius() + 0.02;
+      aabbs.push({
+        minX: bedBox.min.x + baseInset,
+        maxX: bedBox.max.x - baseInset,
+        minY: bedBox.min.y,
+        maxY: mattressY,
+        minZ: bedBox.min.z + baseInset,
+        maxZ: bedBox.max.z - baseInset,
+      });
+
+      // Usually the title menu is still open and the player has not moved. Keep the distance gate so a
+      // very fast player who already stepped off the provisional surface is not teleported back when
+      // the model finishes decoding.
+      if (Math.hypot(controller.position.x - SPAWN.x, controller.position.z - SPAWN.z) < 0.2) {
+        controller.warpTo(new Vector3(SPAWN.x, mattressY + 1.7, SPAWN.z), SPAWN.yaw);
+      }
+    }
+    // Imported beds and closet are measured only after fitToHeight has written their scale. The hiding
+    // arm ignores every other name, just like NoiseProps below.
+    hiding.onPlaced(name, root);
     // The four bottles and plates. Unconditional: the arm ignores every other placement.
     noiseProps?.onPlaced(name, root);
     // Same reason as the knife: the hinge is placed from the leaf's world box, which only exists once
@@ -690,9 +775,11 @@ export function buildHouseScene(
       // No prompt behind an open overlay, and no picking either: the tap that closes the note
       // must not also be able to fire whatever the camera happens to be aimed at.
       hud.setPrompt(null);
+      touch.setInteractionVerb('interact');
       return;
     }
     hud.setPrompt(interact.update());
+    touch.setInteractionVerb(interact.getCurrentVerb());
     // After the overlay return and after the prompt, because this is the other half of the same thing:
     // what the player can touch on purpose, and what they knock over by accident. It reads the
     // controller's position, which main.ts has already advanced for this frame.
@@ -702,6 +789,7 @@ export function buildHouseScene(
 
   const dispose = (): void => {
     interact.clear();
+    hiding.dispose();
     hud.dispose();
     overlay.dispose();
     tweens.length = 0;
@@ -728,7 +816,15 @@ export function buildHouseScene(
 
   return {
     update,
+    startupReady: models.startupReady,
+    allReady: models.allReady,
     overlayOpen: () => overlay.isOpen(),
+    closeOverlay: () => {
+      if (!overlay.isOpen()) return false;
+      overlay.close();
+      return true;
+    },
+    isHidden: () => hiding.isHidden(),
     dispose,
   };
 }

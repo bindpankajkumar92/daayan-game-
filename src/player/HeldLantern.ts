@@ -107,13 +107,14 @@ const PIVOT_FRAC = 0.95;
  * wide as this lantern's 4 cm handle and swallows it, and shrinking the hand rather than growing the
  * lantern is what keeps the lantern inside the frame (see HOLD).
  *
- * It was 0.062 and came down a further 10% on report that the hand read too large. That is a safe
- * direction and only a small one: every clearance in HOLD is a *maximum* the rig must stay inside — the
- * near-plane crossing, the 3.5 cm of wall margin, the bottom-edge crop — so a smaller hand loosens all
- * three at once, and the fist is still wider than the handle it is closed around. Going much below this
- * starts to read as a child's hand rather than as a distant one, since perspective is fixed by HOLD.z.
+ * It was 0.062, then 0.056, and came down a further 7% on report that the hand still read slightly too
+ * large. That is a safe direction and only a small one: every clearance in HOLD is a *maximum* the rig
+ * must stay inside — the near-plane crossing, the 3.5 cm of wall margin, the bottom-edge crop — so a
+ * smaller hand loosens all three at once, and the fist is still wider than the handle it is closed
+ * around. Going much below this starts to read as a child's hand rather than as a distant one, since
+ * perspective is fixed by HOLD.z.
  */
-const PALM_SPAN = 0.056;
+const PALM_SPAN = 0.052;
 const SPAN_BONES: readonly [string, string] = ['R_point1_030', 'R_pink1_042'];
 /** The span these two bones measure in the shipped file, if the rig is ever renamed under us. */
 const SPAN_FALLBACK = 7.212;

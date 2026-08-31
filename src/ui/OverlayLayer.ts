@@ -24,7 +24,10 @@ export class OverlayLayer {
     this.root.id = 'overlay-layer';
     this.root.style.cssText = `
       position: fixed; inset: 0; z-index: ${Z}; display: none;
-      background: rgba(4,4,7,0.72); backdrop-filter: blur(2px);
+      /* No backdrop-filter over WebGL: it forces a framebuffer readback every rendered frame. */
+      background:
+        radial-gradient(ellipse at center, rgba(18,13,10,0.42), rgba(2,2,4,0.88)),
+        rgba(4,4,7,0.76);
       place-items: center; pointer-events: auto; touch-action: none;
       font: 400 13px/1.5 ui-monospace, monospace; color: #e6dfd2;
       user-select: none; -webkit-user-select: none;
@@ -43,15 +46,26 @@ export class OverlayLayer {
     this.closeBtn = document.createElement('button');
     this.closeBtn.textContent = '✕';
     this.closeBtn.style.cssText = `
-      position: absolute; right: 6px; top: 6px; width: 30px; height: 30px;
-      border-radius: 4px; background: rgba(255,255,255,0.06); color: #cfc7b8;
-      border: 1px solid rgba(255,255,255,0.16); font: 600 14px/1 ui-monospace, monospace;
-      cursor: pointer; touch-action: none;
+      position: absolute; right: 6px; top: 6px; width: 38px; height: 38px;
+      border-radius: 50%; background: radial-gradient(circle at 50% 30%, #4a423a, #1e191a 62%, #090709);
+      color: #e7d8bd; border: 1.5px solid rgba(255,206,150,0.30);
+      box-shadow: 0 2px 7px rgba(0,0,0,0.72), inset 0 0 8px rgba(255,180,100,0.07);
+      font: 600 14px/1 ui-monospace, monospace; cursor: pointer; touch-action: none;
+      transition: transform 90ms ease-out, filter 90ms ease-out;
     `;
     this.closeBtn.addEventListener('pointerdown', (e) => {
       e.preventDefault();
+      this.closeBtn.style.transform = 'scale(0.90)';
+      this.closeBtn.style.filter = 'brightness(1.35)';
       this.close();
     });
+    const releaseClose = (): void => {
+      this.closeBtn.style.transform = '';
+      this.closeBtn.style.filter = '';
+    };
+    this.closeBtn.addEventListener('pointerup', releaseClose);
+    this.closeBtn.addEventListener('pointercancel', releaseClose);
+    this.closeBtn.addEventListener('pointerleave', releaseClose);
     this.card.appendChild(this.closeBtn);
 
     // Tapping the dark surround closes too — the fastest gesture on a phone, and the card's own
@@ -86,6 +100,10 @@ export class OverlayLayer {
   close(): void {
     if (!this.open) return;
     this.open = false;
+    // pointerdown closes immediately, so the hidden button may never receive pointerup. Reset the
+    // transient press state here or the preserved close button reopens scaled and over-bright.
+    this.closeBtn.style.transform = '';
+    this.closeBtn.style.filter = '';
     this.root.style.display = 'none';
     const cb = this.onClosed;
     this.onClosed = null;
@@ -99,7 +117,7 @@ export class OverlayLayer {
 
   private onKeyDown = (e: KeyboardEvent): void => {
     if (!this.open) return;
-    if (e.key === 'Escape' || e.key === 'e' || e.key === 'E') {
+    if (e.key === 'Escape') {
       e.preventDefault();
       this.close();
     }
@@ -128,13 +146,26 @@ export function overlayButton(label: string, onTap: () => void, css = ''): HTMLB
   const b = document.createElement('button');
   b.textContent = label;
   b.style.cssText = `
-    border-radius: 4px; background: rgba(255,255,255,0.07); color: #e6dfd2;
-    border: 1px solid rgba(255,255,255,0.18); font: 600 15px/1 ui-monospace, monospace;
-    cursor: pointer; touch-action: none; padding: 12px 0; ${css}
+    min-height: 44px; border-radius: 4px;
+    background: linear-gradient(180deg, rgba(74,56,36,0.72), rgba(27,21,19,0.90));
+    color: #f0dfc1; border: 1.5px solid rgba(255,206,150,0.26);
+    box-shadow: 0 2px 7px rgba(0,0,0,0.62), inset 0 0 10px rgba(255,180,100,0.06);
+    font: 650 15px/1 ui-monospace, monospace; letter-spacing: 0.04em;
+    cursor: pointer; touch-action: none; padding: 12px 0;
+    transition: transform 90ms ease-out, filter 90ms ease-out; ${css}
   `;
   b.addEventListener('pointerdown', (e) => {
     e.preventDefault();
+    b.style.transform = 'scale(0.96)';
+    b.style.filter = 'brightness(1.30)';
     onTap();
   });
+  const release = (): void => {
+    b.style.transform = '';
+    b.style.filter = '';
+  };
+  b.addEventListener('pointerup', release);
+  b.addEventListener('pointercancel', release);
+  b.addEventListener('pointerleave', release);
   return b;
 }

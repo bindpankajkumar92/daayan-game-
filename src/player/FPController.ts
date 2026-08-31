@@ -74,6 +74,12 @@ export class FPController {
   private onGround = true;
   private crouching = false;
   private running = false;
+  /**
+   * A hiding place owns the camera position while this is true. This is stronger than zero movement:
+   * zero input still applies gravity and ground snap, which would pull a camera placed under a bed or
+   * inside a wardrobe back onto the room floor on the next frame.
+   */
+  private movementLocked = false;
   private aabbs: AABB[] = [];
   private floors: FloorRect[] = [];
   /** Last resolved floor height. Sticky, so a gap between two floor rects is not a death pit. */
@@ -181,8 +187,30 @@ export class FPController {
     return this.opts.radius;
   }
 
+  /**
+   * Freeze or release translation without freezing look. Hiding places use this after warping the
+   * camera into their pocket; menus do not need it because main.ts skips the simulation entirely.
+   */
+  setMovementLocked(locked: boolean): void {
+    this.movementLocked = locked;
+    if (locked) {
+      this.velocity.set(0, 0, 0);
+      this.running = false;
+      this.stepPhase = 1;
+    }
+  }
+
+  isMovementLocked(): boolean {
+    return this.movementLocked;
+  }
+
   /** Move relative to current facing. x = strafe (+right), y = forward (+forward). */
   move(strafe: number, forward: number, dt: number): void {
+    if (this.movementLocked) {
+      // Camera still follows look() / addLookDelta(). No gravity, collision or footstep while hidden.
+      this.syncCamera();
+      return;
+    }
     // Where the feet were before this frame's slide, for the footstep cadence at the bottom.
     const x0 = this.position.x;
     const z0 = this.position.z;

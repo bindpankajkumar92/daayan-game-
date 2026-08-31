@@ -27,6 +27,8 @@
 
 import type { FPController } from './FPController';
 import type { DebugOverlay } from '@/core/DebugOverlay';
+import type { InteractionVerb } from '@/game/Interaction';
+import { localize, onLangChange } from '@/ui/Strings';
 
 interface Button {
   el: HTMLButtonElement;
@@ -90,8 +92,11 @@ export class TouchControls {
   private keys = new Set<string>();
   private pointerLocked = false;
 
+  private interactBtn: HTMLButtonElement | null = null;
   private runBtn: HTMLButtonElement | null = null;
   private crouchBtn: HTMLButtonElement | null = null;
+  private interactionVerb: InteractionVerb = 'interact';
+  private revokeLanguage: () => void = () => {};
 
   private static readonly JOY_RADIUS = 56;
   static readonly MOVE_DEADZONE = 0.12;
@@ -140,7 +145,7 @@ export class TouchControls {
     // Inset from the right and bottom edges through env() so a notch or a gesture bar cannot clip them.
     const SIDE = 'calc(14px + env(safe-area-inset-right, 0px))';
     const btm = (n: number): string => `calc(${n}px + env(safe-area-inset-bottom, 0px))`;
-    this.addButton('interact', 'INTERACT', '●', { right: SIDE, bottom: btm(14) }, () =>
+    this.interactBtn = this.addButton('interact', 'INTERACT', '●', { right: SIDE, bottom: btm(14) }, () =>
       this.onInteract(),
     );
     this.runBtn = this.addButton('run', 'RUN', '»', { right: SIDE, bottom: btm(92) }, () => {
@@ -170,11 +175,20 @@ export class TouchControls {
     this.attachTouchHandlers();
     this.attachKeyboardHandlers();
     this.refreshToggleStyles();
+    this.revokeLanguage = onLangChange(() => this.refreshButtonLabels());
+    this.refreshButtonLabels();
   }
 
   setOnInteract(fn: () => void): void {
     this.onInteract = fn;
   }
+
+  setInteractionVerb(verb: InteractionVerb): void {
+    if (verb === this.interactionVerb) return;
+    this.interactionVerb = verb;
+    this.refreshButtonLabels();
+  }
+
   /** Called by the PAUSE button and by Esc / P on a keyboard. */
   setOnPause(fn: () => void): void {
     this.onPause = fn;
@@ -240,6 +254,7 @@ export class TouchControls {
   }
 
   dispose(): void {
+    this.revokeLanguage();
     this.root.remove();
     this.sheet.remove();
     document.removeEventListener('keydown', this.onKeyDown);
@@ -332,6 +347,15 @@ export class TouchControls {
     this.root.appendChild(el);
     this.buttons.push({ el, label });
     return el;
+  }
+
+  private refreshButtonLabels(): void {
+    const interaction = this.interactionVerb === 'hide' ? 'HIDE' : this.interactionVerb === 'exit' ? 'EXIT' : 'INTERACT';
+    for (const button of this.buttons) {
+      const label = button.el.querySelector<HTMLElement>('.tc-lab');
+      if (!label) continue;
+      label.textContent = localize(button.el === this.interactBtn ? interaction : button.label);
+    }
   }
 
   /** Update the visual state of toggle buttons (RUN, CROUCH) so the user sees what is on. */
@@ -508,7 +532,8 @@ export class TouchControls {
       // Esc and P reach the pause handler whether or not the game is already paused — that is what makes
       // Esc close the menu again, and it is the one key that must not be gated on `paused` below.
       if (e.key === 'Escape' || e.key === 'p' || e.key === 'P') {
-        this.onPause();
+        e.preventDefault();
+        if (!e.repeat) this.onPause();
         return;
       }
       if (this.paused) return;
@@ -517,7 +542,8 @@ export class TouchControls {
         this.onToggleDebug();
       }
       if (e.key === 'e' || e.key === 'E') {
-        this.onInteract();
+        e.preventDefault();
+        if (!e.repeat) this.onInteract();
       }
       if (e.key === 'Shift') {
         if (!this.wantRun) {

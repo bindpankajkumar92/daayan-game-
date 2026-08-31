@@ -12,6 +12,7 @@
  */
 
 import { OverlayLayer, overlayButton, overlayTitle } from './OverlayLayer';
+import { localize } from '@/ui/Strings';
 
 export interface SwitchPanelOptions {
   title: string;
@@ -30,7 +31,11 @@ export function showSwitchPanel(layer: OverlayLayer, opts: SwitchPanelOptions): 
   const state = opts.labels.map((_, i) => opts.initial[i] ?? false);
 
   layer.show((content) => {
-    content.appendChild(opts.sub === undefined ? overlayTitle(opts.title) : overlayTitle(opts.title, opts.sub));
+    content.appendChild(
+      opts.sub === undefined
+        ? overlayTitle(localize(opts.title))
+        : overlayTitle(localize(opts.title), localize(opts.sub)),
+    );
 
     const status = document.createElement('div');
     status.style.cssText = `
@@ -53,7 +58,7 @@ export function showSwitchPanel(layer: OverlayLayer, opts: SwitchPanelOptions): 
         // The rocker itself tilts: the label sits at the top when ON, the bottom when OFF, which
         // reads as a physical switch position rather than a checkbox.
         b.style.alignItems = on ? 'flex-start' : 'flex-end';
-        b.textContent = `${opts.labels[i] ?? '?'}\n${on ? 'ON' : 'OFF'}`;
+        b.textContent = `${opts.labels[i] ?? '?'}\n${localize(on ? 'ON' : 'OFF')}`;
       }
     };
 
@@ -77,13 +82,13 @@ export function showSwitchPanel(layer: OverlayLayer, opts: SwitchPanelOptions): 
 
     content.appendChild(
       overlayButton(
-        'PULL MAIN LEVER',
+        localize('PULL MAIN LEVER'),
         () => {
           if (opts.onCommit([...state])) {
             layer.close();
             return;
           }
-          status.textContent = 'A hard snap, and the breakers fall back.';
+          status.textContent = localize('A hard snap, and the breakers fall back.');
           for (let i = 0; i < state.length; i++) state[i] = false;
           opts.onChange([...state]);
           paint();
