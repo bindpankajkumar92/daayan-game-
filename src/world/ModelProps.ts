@@ -21,9 +21,9 @@
  * as the frustum is concerned.
  */
 
-import { Box3, Group, Mesh, Vector3, type AnimationMixer, type Camera, type MeshBasicMaterial, type MeshLambertMaterial, type Object3D, type Scene } from 'three';
-import { BASE_Y } from '@/world/HouseLayout';
-import { GATE, LIVING_DOOR, UPPER, UPPER_DOOR, UPPER_INNER, UPPER_INNER_CUT, UP_Y } from '@/world/HouseRooms';
+import { Box3, Group, Mesh, Vector3, type AnimationClip, type AnimationMixer, type Camera, type MeshBasicMaterial, type MeshLambertMaterial, type Object3D, type Scene } from 'three';
+import { BASE_Y, HALF_T, WALL_H, expandRun, type Segment, type WallRun } from '@/world/HouseLayout';
+import { GATE, HALL_WALLS, LIVING_DOOR, RITUAL_DOOR, ROOMS, UPPER, UPPER_DOOR, UPPER_INNER, UPPER_INNER_CUT, UP_Y } from '@/world/HouseRooms';
 import type { AABB } from '@/player/FPController';
 import { aabbOf } from '@/world/Fixtures';
 import { fitToBox, fitToHeight, playClip, type ModelLoader } from '@/world/ModelLoader';
@@ -308,6 +308,134 @@ export interface ModelPlacement {
 }
 
 /**
+ * A fitted damaged-wall facing, in millimetres, shared by every run in the house.
+ *
+ * REVEAL is the gap left at each jamb and corner, Y_REVEAL the one left at floor and ceiling: the
+ * casing and the skirting cover both, and they stop art from crossing a walkable opening or standing
+ * proud of the ceiling line. DEPTH is the facing's own thickness and FACE_LIFT how far in front of the
+ * plaster it hangs, so a panel centred at HALF_T + FACE_LIFT occupies 0.06 .. 0.16 inward of the wall
+ * centreline — 6 cm proud of an inner face at 0.10. That is what props near these walls have to clear.
+ */
+const PANEL_REVEAL = 0.05;
+const PANEL_Y_REVEAL = 0.005;
+const PANEL_DEPTH = 0.1;
+const PANEL_FACE_LIFT = 0.01;
+
+/**
+ * Fit damaged-wall panels from the same solid segments the structural shell uses.
+ *
+ * `collide` is the interesting flag. With it the panel emits a `walls` slice and the run it came from
+ * must carry `modelCollision`, so the scanned geometry owns collision and the shell only draws — that
+ * is the hall. Without it the shell keeps collision and the panel is pure facing, which is what the
+ * hallway has always done and what every run added since follows. The choice is not cosmetic:
+ * wallColliders drops any run under WALL_MIN_RUN entirely, so `collide` on a wall with a short corner
+ * stub beside a doorway would leave that stub with no collider at all and let the player walk through
+ * it. Facings are the safe default; `collide` is for runs measured and known to be long.
+ */
+function wallPanels(
+  prefix: string,
+  run: WallRun,
+  inwardX: number,
+  inwardZ: number,
+  yaw: number,
+  floorY: number,
+  ceilY: number,
+  opts: { first?: boolean; collide?: boolean } = {},
+): ModelPlacement[] {
+  const alongX = Math.abs(run.x2 - run.x1) > Math.abs(run.z2 - run.z1);
+  const runA0 = alongX ? Math.min(run.x1, run.x2) : Math.min(run.z1, run.z2);
+  const runA1 = alongX ? Math.max(run.x1, run.x2) : Math.max(run.z1, run.z2);
+  return expandRun(run, floorY, ceilY).map((segment: Segment, index) => {
+    const segA0 = alongX ? Math.min(segment.x1, segment.x2) : Math.min(segment.z1, segment.z2);
+    const segA1 = alongX ? Math.max(segment.x1, segment.x2) : Math.max(segment.z1, segment.z2);
+    // Reverse expandRun's collider padding, then leave a reveal at every jamb and corner.
+    const a0 = Math.max(runA0, segA0 - HALF_T) + PANEL_REVEAL;
+    const a1 = Math.min(runA1, segA1 + HALF_T) - PANEL_REVEAL;
+    const height = segment.y1 - segment.y0 - PANEL_Y_REVEAL * 2;
+    const sliceInset = height > 1 ? 0.2 : 0.05;
+    const row: ModelPlacement = {
+      name: 'wall-damaged.glb', id: `${prefix}-${index}`, clone: true,
+      height, fit: { width: a1 - a0, height, depth: PANEL_DEPTH },
+      x: alongX ? (a0 + a1) / 2 : run.x1 + inwardX * (HALF_T + PANEL_FACE_LIFT),
+      y: segment.y0 + PANEL_Y_REVEAL,
+      z: alongX ? run.z1 + inwardZ * (HALF_T + PANEL_FACE_LIFT) : (a0 + a1) / 2,
+      yaw, albedo: 1.6,
+    };
+    if (opts.first === true) row.first = true;
+    if (opts.collide === true) row.walls = { y0: sliceInset, y1: height - sliceInset, top: height };
+    return row;
+  });
+}
+
+/**
+ * Every solid run of one room, faced, with the inward direction worked out rather than written down.
+ *
+ * A run is a line, so which side of it the room is on is not in the run — but it is in the room: the
+ * floor rect's centre is inside it by definition, so the sign from the wall's line to that centre is
+ * the inward normal, and the yaw follows from it. The four cases match what the hall's panels were
+ * given by hand, which is how this was checked: south (inward +z) yaw 0, west (+x) a quarter turn,
+ * east (-x) a quarter turn back, north (-z) a half turn.
+ *
+ * `collideOnly` runs are skipped. Those exist exactly where an imported model already draws the wall,
+ * and facing them would put two walls in the same place.
+ */
+function roomWallPanels(roomId: string, opts: { first?: boolean; collide?: boolean } = {}): ModelPlacement[] {
+  const room = ROOMS.find((r) => r.id === roomId);
+  if (room === undefined) return [];
+  const cx = (room.floor.x0 + room.floor.x1) / 2;
+  const cz = (room.floor.z0 + room.floor.z1) / 2;
+  const out: ModelPlacement[] = [];
+  for (const [index, run] of room.walls.entries()) {
+    if (run.collideOnly === true) continue;
+    const alongX = Math.abs(run.x2 - run.x1) > Math.abs(run.z2 - run.z1);
+    const inwardX = alongX ? 0 : Math.sign(cx - run.x1);
+    const inwardZ = alongX ? Math.sign(cz - run.z1) : 0;
+    const yaw = alongX ? (inwardZ > 0 ? 0 : Math.PI) : inwardX * (Math.PI / 2);
+    out.push(
+      ...wallPanels(`${roomId}-wall-${index}`, run, inwardX, inwardZ, yaw, room.floorY, room.floorY + room.height, opts),
+    );
+  }
+  return out;
+}
+
+const HALL_WALL_PANELS: ModelPlacement[] = [
+  ...wallPanels('hall-wall-south', HALL_WALLS.south, 0, 1, 0, 0, WALL_H, { first: true, collide: true }),
+  ...wallPanels('hall-wall-west', HALL_WALLS.west, 1, 0, Math.PI / 2, 0, WALL_H, { first: true, collide: true }),
+  ...wallPanels('hall-wall-east', HALL_WALLS.east, -1, 0, -Math.PI / 2, 0, WALL_H, { first: true, collide: true }),
+  ...wallPanels('hall-wall-north', HALL_WALLS.north, 0, -1, Math.PI, 0, WALL_H, { first: true, collide: true }),
+];
+
+/**
+ * The bedroom, the living room and the basement, faced with the same scan as the hall and the hallway.
+ *
+ * These are facings, not colliders — see wallPanels — so no run in HouseRooms needed `modelCollision`
+ * and the procedural shell still stops the player 0.35 m from the plaster, i.e. 0.29 m from the panel
+ * front. The hallway has shipped on that arrangement since it was built.
+ *
+ * The bedroom's are `first`, the other two rooms' are not. The player now wakes on the bedroom bed
+ * facing its doorway, so those three runs are the first walls in frame and the intro waits for them;
+ * the living room and the basement are behind a closed door and can arrive whenever they arrive. Each
+ * row clones a file that is downloaded once, so a `first` row here costs a clone and a fit, not a
+ * fetch — which is why the whole bedroom can go in the gate without pushing the gate out.
+ *
+ * The window on the bedroom's west wall and the doorway on the living room's north wall each split
+ * their run into a sill and a header panel, both of them wider than tall. The scan is stretched
+ * non-uniformly to fill them, exactly as the hall's archway header already is, and both sit behind
+ * their casing where the aspect does not read.
+ */
+const BEDROOM_WALL_PANELS: ModelPlacement[] = roomWallPanels('bedroom', { first: true });
+const LIVING_WALL_PANELS: ModelPlacement[] = roomWallPanels('living');
+const BASEMENT_WALL_PANELS: ModelPlacement[] = roomWallPanels('basement');
+
+/** Every faced run in the house, in one list, for the startup gate to filter. */
+const WALL_PANELS: ModelPlacement[] = [
+  ...HALL_WALL_PANELS,
+  ...BEDROOM_WALL_PANELS,
+  ...LIVING_WALL_PANELS,
+  ...BASEMENT_WALL_PANELS,
+];
+
+/**
  * Read in room order: hall, hallway, bedroom, living room, then the basement wing. Entries that
  * stand on another must come after it.
  *
@@ -316,6 +444,9 @@ export interface ModelPlacement {
  */
 export const MODEL_PLACEMENTS: ModelPlacement[] = [
   // --- Main hall ---
+  // Bounds, openings and collision all come from HouseRooms' authoritative wall runs.
+  ...HALL_WALL_PANELS,
+
   // lantern.glb is not here: the player carries it. See HeldLantern, and note that ModelLoader
   // hands the same Group to every caller, so a row here would fight the viewmodel for it.
   //
@@ -396,7 +527,7 @@ export const MODEL_PLACEMENTS: ModelPlacement[] = [
   // central arch, while the north three stop at the bedroom and living-room jambs. That small reveal is
   // hidden by the casing/trim but prevents art from crossing a walkable opening. The procedural wall
   // remains 1 cm behind these 10 cm facings and continues to own collision.
-  { name: 'wall-damaged.glb', id: 'hallway-wall-south-west', height: 2.99, fit: { width: 7.3, height: 2.99, depth: 0.1 }, x: -5.3, y: 0.005, z: 0.11, albedo: 1.6 },
+  { name: 'wall-damaged.glb', id: 'hallway-wall-south-west', clone: true, height: 2.99, fit: { width: 7.3, height: 2.99, depth: 0.1 }, x: -5.3, y: 0.005, z: 0.11, albedo: 1.6 },
   { name: 'wall-damaged.glb', id: 'hallway-wall-south-east', clone: true, height: 2.99, fit: { width: 7.3, height: 2.99, depth: 0.1 }, x: 5.3, y: 0.005, z: 0.11, albedo: 1.6 },
   { name: 'wall-damaged.glb', id: 'hallway-wall-north-west', clone: true, height: 2.99, fit: { width: 3.1, height: 2.99, depth: 0.1 }, x: -7.4, y: 0.005, z: 2.49, albedo: 1.6 },
   { name: 'wall-damaged.glb', id: 'hallway-wall-north-middle', clone: true, height: 2.99, fit: { width: 8.3, height: 2.99, depth: 0.1 }, x: 0, y: 0.005, z: 2.49, albedo: 1.6 },
@@ -416,19 +547,36 @@ export const MODEL_PLACEMENTS: ModelPlacement[] = [
   { name: 'bottle-beer.glb', height: 0.26, x: -3.0, z: 2.2, shadow: 1 },
 
   // --- Bedroom (window on the west wall at z = 6.0) ---
-  // Against the west wall and north of the window, not beside the made bed HouseProps already
-  // builds at (-6.2, 8.3): two beds a metre apart looked like a mistake rather than a shared room.
-  // Startup-visible now: the player wakes on this mattress. HouseScene registers a low base collider
-  // plus a walkable mattress once the measured box exists; a full `collide` box would trap a capsule
-  // whose feet are already on top of it. `first` puts it immediately after the gate in load order.
-  { name: 'bed.glb', height: 2.1, x: -8.26, z: 9.0, yaw: Math.PI / 2, first: true, shadow: 1 },
+  // Its three runs, faced. See roomWallPanels for why these carry no collider, and BEDROOM_WALL_PANELS
+  // for why this is the one room's worth that the startup gate waits for.
+  ...BEDROOM_WALL_PANELS,
+  // The one bed in this room, standing where HouseProps used to build a procedural one at (-6.2, 8.3).
+  // It was against the west wall at x -8.26 because two beds a metre apart looked like a mistake rather
+  // than a shared room; with the procedural one gone the compromise goes too, and the bed the player
+  // wakes on is the one in the middle of the floor. Only x moves: z 9.0 is what the cat's placement, the
+  // spawn mattress's z0/z1 and SPAWN.z are all tuned against, and the fitted footprint is 1.0 x 2.1 m, so
+  // at x -6.2 it spans -6.7 .. -5.7 with 0.77 m between its east edge and the bedside table at -4.7 and
+  // 5 cm between its head and the north wall's inner face at 10.1 — the same clearance it had.
+  //
+  // That 5 cm is now 5 cm to the plaster and -1 cm to the damaged-wall facing hung in front of it, whose
+  // front is at 10.04. Left as it is: a centimetre of headboard inside the frontmost relief of a rough
+  // scan is not visible, the facing carries no collider for it to fight, and buying the clearance back
+  // would mean moving z, which SPAWN.z, the cat's row and HouseScene's spawn mattress are all measured
+  // from. The closet 3 m east did get moved — see its row for why that one could not be waved off.
+  //
+  // Startup-visible: the player wakes on this mattress. HouseScene registers a low base collider plus a
+  // walkable mattress once the measured box exists; a full `collide` box would trap a capsule whose feet
+  // are already on top of it. `first` puts it immediately after the gate in load order.
+  { name: 'bed.glb', height: 2.1, x: -6.2, z: 9.0, yaw: Math.PI / 2, first: true, shadow: 1 },
   // Curled on the mattress. `on` reads the bed's measured top, which is the headboard rail at 0.66,
-  // so y drops to the bedding at 0.47; retuning the bed still carries the cat with it.
+  // so y drops to the bedding at 0.47; retuning the bed still carries the cat with it. x follows the bed
+  // west-to-centre: this is the bed the cat was already on, so keeping the two together is what leaves the
+  // room with one bed and the cat still on it.
   //
   // Its shadow lands on the bedding rather than on the floor, which is what `on` buys and is the whole
   // reason it is worth having here: a cat on a mattress with a shadow on the boards below would read as
   // hovering twice over. 0.8, and its 0.36 x 0.24 m quad stays well inside the 1 x 2.1 m bed.
-  { name: 'cat-still.glb', height: 0.45, x: -8.26, y: -0.19, z: 8.9, on: 'bed.glb', shadow: 0.8 },
+  { name: 'cat-still.glb', height: 0.45, x: -6.2, y: -0.19, z: 8.9, on: 'bed.glb', shadow: 0.8 },
   // Three more sleepers for a room that reads as a place people were kept rather than a bedroom. Each one
   // arrives at metre scale already, so `height` is the file's own longest axis to four places and is a fit,
   // not a rescale: the closet is 1.317 x 2.118 x 0.692 with y longest, horror_bed 2.224 x 0.742 x 1.146
@@ -436,13 +584,22 @@ export const MODEL_PLACEMENTS: ModelPlacement[] = [
   //
   // All three go along the north and east walls, in the two bands HouseProps leaves empty -- north-east
   // x -4.1 .. -1.2, z 8.0 .. 10.1 and south-east x -4.1 .. -1.2, z 2.7 .. 5.7. bed.glb and the cat hold the
-  // west wall, the dressing table and its code box the south-west corner, the procedural bed and wardrobe
-  // the middle, and the rug is floor.
+  // middle of the floor, the dressing table and its code box the south-west corner, and the rug is floor.
+  // The east wall's own band is wider than those numbers now — the procedural wardrobe that stood at
+  // (-1.45, 6.6) is gone — but nothing here was moved into the space, because the closet is the wardrobe
+  // in this room and putting a fourth sleeper against that wall is what the empty bands are avoiding.
   //
   // albedo on the two dark ones, none on the closet's near neighbours: their maps mean 106,88,69 and
   // 98,76,63, i.e. linear 0.105 and 0.081, against the 0.222 of the bed.glb standing beside them that
   // needs no lift at all. 1.6 and 1.8 put them just under it rather than level with the plaster.
-  { name: 'closet-old.glb', height: 2.1179, x: -2.0, z: 9.75, collide: true, albedo: 1.6, shadow: 1 },
+  //
+  // The closet stands at z 9.65, not the 9.75 it had against bare plaster. It is 0.692 deep, so it used
+  // to reach z 10.096 against an inner face at 10.1 — 4 mm, which was the point. The damaged-wall facing
+  // now hangs 6 cm in front of that face, ending at 10.04, and this is the one prop in the room where a
+  // 5.6 cm interpenetration would actually be seen: it is a WARDROBE_NAMES hiding spot, so the camera
+  // goes inside it and would have looked out through the back of the wall. 10 cm south restores the same
+  // 4 cm of air, to the facing this time, and keeps it a third of a metre clear of horror_bed.
+  { name: 'closet-old.glb', height: 2.1179, x: -2.0, z: 9.65, collide: true, albedo: 1.6, shadow: 1 },
   // `drop` takes the 4.44 x 4.44 m ground plane the file ships under the bed (Floor_Floor_0, 2 triangles).
   // It is the longest axis in the file, so left in it would set the scale for everything -- the bed would
   // come out half size -- and it would z-fight the bedroom floor across a fifth of the room.
@@ -473,13 +630,58 @@ export const MODEL_PLACEMENTS: ModelPlacement[] = [
   // walk through. Its distinct id prevents the upper-flat interaction arm from treating it as that door.
   { name: 'door-inner.glb', id: 'door-living', clone: true, height: 2.15, x: LIVING_DOOR.x - 0.51, z: LIVING_DOOR.z + 0.45, yaw: -1.0, albedo: 2.0 },
 
-  // Noise prop three, on the bare boards between the rug (x -6.2 .. -3.8) and the wardrobe
-  // (x -1.78 .. -1.12) — the one clear stretch of this floor, since five beds, a closet, two tables
-  // and a chair have the rest of it. 3.0 m from the door leaf above and 3.1 from the diary, so it
-  // competes with neither for the prompt. A 24 cm dinner plate 3.2 cm tall (1 : 0.132 : 1, x longest).
+  /**
+   * The cellar and basement leaves, replacing the last two procedural ones — HouseScene's doorLeaves
+   * array is empty now, and makeDoorLeaf is gone with it.
+   *
+   * `drop: ['frame']` is what makes this file usable in an opening that is not the upper flat's. door.glb
+   * ships a frame *and* a leaf as sibling nodes, and the whole thing is 0.5715 : 1 : 0.1353 — so lapping
+   * CELLAR_DOOR's 1.6 m clear width with the frame on would demand a height of 2.905 m, standing 0.8 m of
+   * frame above a 2.1 m lintel in a 3.0 m room. Both these openings already have a makeCasing() frame in
+   * them, which is the same reason door-inner.glb needs none, so what is wanted here is that file's leaf
+   * and nothing else. prune() matches node-name prefixes, and `frame` reaches only the frame subtree; the
+   * handle stays, being a child of `door`.
+   *
+   * Leaf alone the file measures 96.35 x 205.09 x 23.36, y longest, so height 2.15 — the same as the
+   * bedroom and living leaves, in openings of the same 2.1 m — gives 1.010 wide and 0.245 across the
+   * handle (the slab itself is 0.107; the handle stands 5 cm off each face). The handle sits on the local
+   * -x side, so unlike door-inner.glb the *hinge* edge is local +x, and the arithmetic below is the
+   * bedroom row's with that sign flipped: for a hinge at H and a swing of `a` radians off the wall,
+   * yaw = pi/2 +- a and the centre is H minus half the width along the leaf's own +x.
+   *
+   * Both hinge on the low-z jamb, and both swing into the room the player is walking into rather than the
+   * one they came from:
+   *
+   * - The cellar door swings east into the hallway, because west of it is the stair's top landing and a
+   *   leaf hung there would stand over the first two steps. a = 1.0 rad (57 deg) off the wall from the
+   *   jamb at z 0.5 puts its free edge at (-8.15, 1.046), so it covers z 0.5..1.046 of a 0.5..2.1
+   *   opening and leaves 1.054 m to walk through — the bedroom door's 1.02 m, in the same 1.6 m opening.
+   * - The basement door swings west into the cellar, away from the same stair at the other end. Its
+   *   opening is 2.0 m, so a shallower a = 0.6 rad still leaves 1.166 m clear while keeping the leaf only
+   *   0.57 m off the wall plane — which matters here and not in the hallway, because basement.glb's one
+   *   piece of geometry that reaches past its own wall is a water pipe 5 cm shy of this wall's inner face.
+   *   z 0.3..1.134 is in the cellar's documented-clear south strip, so the walkable lane from the stair to
+   *   the ritual door (z 1.0..2.6) keeps its full width.
+   *
+   * Ajar with no blocker, no interaction and no arm, which is this house's policy for interior leaves.
+   * The distinct ids are load-bearing twice over: they keep the loader from moving the upper flat's front
+   * door out of its frame instead of copying it, and they keep armUpperDoor() — which hooks on the placed
+   * id and hard-codes UPPER_DOOR — from hinging a leaf that stands two storeys below it. albedo matches
+   * that row for the reason door-bedroom's matches its own: clone(true) shares materials.
+   */
+  { name: 'door.glb', id: 'door-cellar', clone: true, drop: ['frame'], height: 2.15, x: -8.5751, z: 0.7729, yaw: Math.PI / 2 + 1.0, albedo: 2.0 },
+  { name: 'door.glb', id: 'door-basement', clone: true, drop: ['frame'], height: 2.15, x: -14.0851, y: BASE_Y, z: 0.7168, yaw: Math.PI / 2 - 0.6, albedo: 2.0 },
+
+  // Noise prop three, on the bare boards between the rug (x -6.2 .. -3.8) and the east wall — the one
+  // clear stretch of this floor, since the beds, a closet, two tables and a chair have the rest of it.
+  // 3.0 m from the door leaf above and 3.1 from the diary, so it competes with neither for the prompt.
+  // A 24 cm dinner plate 3.2 cm tall (1 : 0.132 : 1, x longest).
   { name: 'plate.glb', height: 0.24, x: -3.2, z: 6.5, shadow: 1 },
 
   // --- Living room (window on the north wall at x = 4.0) ---
+  // Its two runs, faced. The other two sides of this room are the hallway's north wall and the shared
+  // wall with the bedroom, both of which belong to their own room's list.
+  ...LIVING_WALL_PANELS,
   // A side table between the armchair (6.7, 4.7) and the fire, rather than standing alone in the
   // middle of the floor where it both blocked the walk through and duplicated the dining table.
   //
@@ -492,7 +694,10 @@ export const MODEL_PLACEMENTS: ModelPlacement[] = [
   // fight the hand attachment for the cached Group exactly as a lantern row would fight HeldLantern.
   // North wall, east of the window. Turned for the same reason as the other painting; this one is
   // double-sided, so hung unturned it showed the wood backing of the canvas.
-  { name: 'painting-sun.glb', height: 0.8, x: 7.0, y: 1.5, z: 10.03, yaw: Math.PI },
+  //
+  // z 9.97 rather than the 10.03 it hung at, for the same reason the closet moved: the facing's front is
+  // at 10.04, and a canvas hung at 10.03 would have been a painting inside a wall.
+  { name: 'painting-sun.glb', height: 0.8, x: 7.0, y: 1.5, z: 9.97, yaw: Math.PI },
   // Noise prop four, and the only one of them off the floor. `on` reads the side table's measured top
   // rather than restating it — 0.689, its 0.588 x 0.540 x 0.509 fitted to 0.75 on x — so retuning the
   // table carries the plate up with it. Set 12 cm west and 10 cm south of the table's centre, which
@@ -501,6 +706,12 @@ export const MODEL_PLACEMENTS: ModelPlacement[] = [
   { name: 'plate-ceramic.glb', height: 0.26, x: 7.48, z: 5.3, on: 'table.glb', shadow: 1 },
 
   // --- Basement ---
+  // Its five runs, faced. Two of them touch basement.glb's own dressing by a centimetre: the water pipe
+  // at x -13.95 against the east panels' front at -13.96, and the shelving at z 6.45 against the north
+  // panel's front at 6.44. Both are a rough scan's frontmost relief brushing the back of a prop that no
+  // collider and no camera can get behind, so they are left alone rather than paid for by moving a room's
+  // worth of dressing 2 cm south.
+  ...BASEMENT_WALL_PANELS,
   // cat-walk.glb is not here: it is the roaming cat, and it walks the whole house rather than one
   // spot in the basement. See CatRoamer, and note that a row here would fight it for the cached
   // Group and would also freeze its cull centre at whatever this row said.
@@ -515,7 +726,7 @@ export const MODEL_PLACEMENTS: ModelPlacement[] = [
   //
   // `drop` takes the shell with it, and that is the whole design of this row rather than a detail of it:
   // the model's perimeter is unbroken at chest height, measured, and the house's cellar has two doorways
-  // cut in it — BASEMENT_DOOR at the stair and the hidden RITUAL_DOOR behind the shelf. Keeping the
+  // cut in it — BASEMENT_DOOR at the stair and the hidden RITUAL_DOOR behind the screen. Keeping the
   // model's walls would seal both, visibly and in the colliders, and reshaping the house to the model
   // would move the whole ritual wing and every puzzle anchor in it. So HouseRooms keeps the room and the
   // model brings the clutter. Also dropped: its own stairwell and stair (the house has stair-wood.glb
@@ -528,7 +739,7 @@ export const MODEL_PLACEMENTS: ModelPlacement[] = [
   // the placement is arithmetic from there. fitToHeight centres the bbox, so x -17.075 stands the
   // content's +x edge — a water pipe, the one thing in the file that reaches past its own wall — 5 cm
   // shy of the east wall's inner face at -13.9, and leaves 1.70 m clear at the west end for the ritual
-  // doorway and the shelf that hides it; yaw pi first, which sends the model's cluttered end to the
+  // doorway and the screen that hides it; yaw pi first, which sends the model's cluttered end to the
   // north wall and its empty end to the stair, so the player comes down the steps into open floor and
   // faces the shelving across the room. z 3.013 stands the shelf 5 cm off the north wall's inner face.
   // The content then occupies x -20.20..-13.95 and z -0.42..6.45 inside a room of -21.9..-13.9 by
@@ -571,6 +782,39 @@ export const MODEL_PLACEMENTS: ModelPlacement[] = [
     // 'barrel', 'box1' and 'cartonbox' left with it: prune() runs before propColliders(), so a dropped
     // subtree emits no collider anyway, and a key that can never match is worse than no key.
     solids: ['shelf', 'washingmachine', 'vaccum', 'arcade', 'midpipe'],
+  },
+
+  // The sliding screen over RITUAL_DOOR, where a procedural shelf used to stand. It is armed rather
+  // than animated from here — see RitualDoors, which owns the blocker, the prompt and the mixer, and
+  // which is also where the measurements behind these three fit numbers are written down.
+  //
+  // No `clip`: that path loops the action forever and only ticks its mixer while the model is inside
+  // CULL_RADIUS_SQ, and this is a one-shot the player triggers. `drop` takes the fixed full-width panel
+  // the two leaves slide across, without which opening them would reveal more paper instead of a hole.
+  //
+  // The pruned source is 9.565 thick x 202.603 tall x 161.173 wide in its own units, so the fit reads
+  // straight off those axes with no yaw, and 2.0 m of width covers the 1.8 m opening with 10 cm of
+  // overlap at each jamb. x -21.77 stands the leaves' 10 cm thickness at -21.82..-21.72: 2 cm off the
+  // damaged-wall facing's front at -21.84, 5 cm inside the ritual casing's jambs at -21.87, and 1.70 m
+  // clear of basement.glb's content, which stops at -20.20. height 2.1 seats them on BASE_Y with their
+  // top exactly at RITUAL_DOOR.top, meeting the header panel and clearing the lintel by 5 cm.
+  //
+  // One albedo for two maps that disagree. The frames measure linear 0.0278 and want the 2.0 every
+  // other dark import in this house gets; the leaves' paper measures 0.8251, the brightest map in the
+  // game, and wants none. 1.8 is what a single multiplier can do for both: the frames land at 0.050,
+  // which reads as wood in lantern light instead of as a silhouette, and the paper's 1.49 sits in
+  // ACESFilmic's shoulder at exposure 1.35 rather than clipping to a flat white rectangle. A paper
+  // screen catching the lantern is the point of it being here, so erring bright is erring the right way.
+  {
+    name: 'doors-sliding.glb',
+    id: 'doors-ritual',
+    height: 2.1,
+    fit: { width: 0.1, height: 2.1, depth: 2.0 },
+    x: -21.77,
+    y: BASE_Y,
+    z: RITUAL_DOOR.z,
+    albedo: 1.8,
+    drop: ['Plane011'],
   },
 
   // --- Black magic room (through the basement's north wall, see HouseRooms.BLACK) ---
@@ -1200,7 +1444,9 @@ const LOOKAHEAD = 2;
  *
  * `onPlaced` fires per model, after its fit and after it is in the scene — which is the only moment
  * at which something may be hung off one of its bones, since the fit writes the root's own scale and
- * everything measured in bone units depends on it.
+ * everything measured in bone units depends on it. It is handed the file's clips as well, for the one
+ * thing `clip` cannot do: a one-shot the player triggers, which has to be built where the trigger is.
+ * See RitualDoors.
  *
  * `shadowMat` is the house's one contact-shadow material, from FixtureMats — passed in rather than
  * made here because the procedural dressing merges its shadows through the same instance, and two
@@ -1213,7 +1459,7 @@ export function installModels(
   aabbs: AABB[],
   shadowMat: MeshBasicMaterial,
   onError: (err: unknown, where: string) => void,
-  onPlaced?: (name: string, root: Object3D) => void,
+  onPlaced?: (name: string, root: Object3D, clips: AnimationClip[]) => void,
 ): ModelPropsHandles {
   const group = new Group();
   group.name = 'models';
@@ -1221,7 +1467,15 @@ export function installModels(
   const placed: Placed[] = [];
   /** Measured top of each placed model, for entries that stand on one. */
   const tops = new Map<string, number>();
-  const startupPending = new Set(['gate-main.glb', 'bed.glb']);
+  // Every panel the gate waits for, taken from the one flag that decides it rather than from a second
+  // list that could disagree with the first. The hall's four sides and the bedroom's three runs are
+  // `first`; the living room's and the basement's are not, and adding a room to the gate later means
+  // marking it `first` in one place.
+  const startupPending = new Set([
+    'gate-main.glb',
+    'bed.glb',
+    ...WALL_PANELS.filter((p) => p.first === true).map((p) => p.id ?? p.name),
+  ]);
   let resolveStartup!: () => void;
   const startupReady = new Promise<void>((resolve) => {
     resolveStartup = resolve;
@@ -1315,7 +1569,7 @@ export function installModels(
         const clip = p.clip !== undefined ? clips[p.clip] : undefined;
         if (clip) entry.mixer = playClip(root, clip, p.speed ?? 1);
         placed.push(entry);
-        onPlaced?.(id, root);
+        onPlaced?.(id, root, clips);
       } catch (err) {
         onError(err, `model:${id}`);
       } finally {

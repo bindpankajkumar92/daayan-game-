@@ -25,10 +25,20 @@ export const PLACE = {
   codeBox: { x: -7.4, y: 0.76, z: 3.0 },
   /** Stopped clock, on the wall directly above the box. */
   clock: { x: -7.4, y: 1.92, z: 2.72 },
-  /** Basement breaker panel on the south wall; its hatch sits 0.95 m to the +x side. */
-  breaker: { x: -19.5, y: -1.55, z: -1.86 },
-  /** Shelf against the basement's west wall, standing over the ritual doorway. */
-  shelf: { x: -21.55, z: 2.3 },
+  /**
+   * Basement breaker panel on the south wall; its hatch sits 0.95 m to the +x side.
+   *
+   * z -1.80, not the -1.86 it was built at. That wall now wears a damaged-wall facing whose front is
+   * 6 cm proud of the plaster, at z -1.84, and the panel's own body is a 0.13 m box hung *behind* this
+   * z: at -1.86 the whole body and the hatch's backplate sat inside the facing, leaving a face plate
+   * flush with broken masonry and four rockers poking 1.5 cm out of it. Everything here is measured
+   * from this one point, so moving it 6 cm — exactly the facing's protrusion — restores every
+   * relationship the panel was authored with, including Fixtures' insistence that the hatch be mounted
+   * *on* the wall rather than recessed into it, which is the only reason its key is findable.
+   */
+  breaker: { x: -19.5, y: -1.55, z: -1.8 },
+  /** Sliding screen against the basement's west wall, standing over the ritual doorway. */
+  doors: { x: -21.77, z: 2.3 },
   /** Altar, broadside to the door so all four symbols are visible on entering. */
   altar: { x: -26.8, z: 2.3 },
 } as const;
@@ -167,21 +177,18 @@ function bedroom({ b, m, aabbs, at }: Ctx): void {
   candle(b, m, P.x - 0.58, P.y + 0.01, 2.92, 0.11);
   at['bedroom.clock'] = new Vector3(PLACE.clock.x, PLACE.clock.y, PLACE.clock.z + 0.1);
 
-  // Bed. Made, and not slept in — the coverlet is flat and the pillow has no dent.
-  b.box(m.wood, 1.5, 0.2, 2.1, -6.2, 0.28, 8.3);
-  for (const dx of [-0.68, 0.68]) {
-    for (const dz of [-0.98, 0.98]) b.box(m.wood, 0.09, 0.18, 0.09, -6.2 + dx, 0.09, 8.3 + dz);
-  }
-  b.box(m.cloth, 1.44, 0.2, 2.02, -6.2, 0.48, 8.3);
-  b.box(m.paper, 0.62, 0.13, 0.34, -6.2, 0.64, 9.14);
-  b.box(m.wood, 1.5, 0.9, 0.08, -6.2, 0.83, 9.41);
-  aabbs.push(aabbOf(-6.2, 0, 8.3, 0.76, 1.08, 0.58));
-
-  // Wardrobe against the east wall, doors shut.
-  b.box(m.wood, 0.62, 2.05, 1.5, -1.45, 1.025, 6.6);
-  for (const dz of [-0.36, 0.36]) b.box(m.door, 0.03, 1.86, 0.7, -1.75, 1.02, 6.6 + dz);
-  b.cyl(m.brass, 0.016, 0.016, 0.06, 5, -1.78, 1.02, 6.6, 'x');
-  aabbs.push(aabbOf(-1.45, 0, 6.6, 0.33, 0.76, 2.05));
+  /*
+   * The made bed and the wardrobe that stood here are both gone, and neither left a gap in the room.
+   *
+   * The bed was six boxes at (-6.2, 8.3) and bed.glb now stands in its place — see ModelProps, where that
+   * row moved west off the wall to take this spot. Two beds a metre apart was the reason this one was
+   * procedural and that one was against the wall; with one bed there is no reason for either compromise,
+   * and the spawn mattress the player wakes on is now the middle of the room.
+   *
+   * The wardrobe was a 0.62 x 2.05 x 1.5 box with two doors at (-1.45, 6.6), against the east wall.
+   * closet-old.glb is the wardrobe in this room now, at (-2.0, 9.75) — so the hiding pocket the box was
+   * registered for in HouseScene survives as that model's, which Hiding picks up through WARDROBE_NAMES.
+   */
 
   // Bedside table: the diary page, and a candle burned down to nothing.
   table(b, m, -4.7, 9.3, 0.46, 0.46, 0.56, 0);
@@ -285,15 +292,17 @@ function shaft({ b, m }: Ctx): void {
  * interpretation rather than trial-and-error and that only works if the damaged sheet is in the
  * player's eye line while they are looking at the rockers.
  *
- * The shelf against the west wall is the other thing this room does, and the only help it gets is
- * geometry and a scuff on the floor.
+ * The screen against the west wall is the other thing this room does, and the only help it gets is
+ * geometry and a mark on the floor.
  */
 function basement({ b, m, aabbs, at }: Ctx): void {
   const P = PLACE.breaker;
 
-  // The diagram, nailed to the wall an arm's length from the panel.
-  sheet(b, m, -20.62, P.y - 0.05, -1.88, 0.44, 0.54, 'z');
-  for (const dx of [-0.18, 0.18]) b.box(m.iron, 0.018, 0.018, 0.018, -20.62 + dx, P.y + 0.19, -1.85);
+  // The diagram, nailed to the wall an arm's length from the panel. Its z moves with the panel's, and
+  // for the same reason: the facing's front is at -1.84, and a 8 mm sheet at -1.88 was a sheet of paper
+  // inside a wall. -1.82 hangs it 2 cm in front of the masonry, as it always was.
+  sheet(b, m, -20.62, P.y - 0.05, -1.82, 0.44, 0.54, 'z');
+  for (const dx of [-0.18, 0.18]) b.box(m.iron, 0.018, 0.018, 0.018, -20.62 + dx, P.y + 0.19, -1.79);
   at['basement.diagram'] = new Vector3(-20.62, P.y - 0.05, -1.6);
 
   // Workbench. Tools, jars, and the note about the draught weighted under one of them.
@@ -315,23 +324,30 @@ function basement({ b, m, aabbs, at }: Ctx): void {
   // The tally, cut into the plaster beside the door at the height of someone sitting down.
   // Ten groups of five in two rows, then the fifty-first mark on its own.
   //
-  // x = -13.895, not -13.89. The wall these are scratched into is centred on BASEMENT.x1 = -13.8 and
-  // 0.2 thick, so the face the player sees from inside the cellar is at -13.900 — and a 14 mm mark
-  // centred at -13.890 spans -13.897..-13.883, which is 3 mm *behind* that face. Fifty-one marks the
-  // whole point of the room, invisible except where the depth test went the other way. Centred at
-  // -13.895 each one stands 2 mm proud and reads as cut in.
+  // x = -13.955, and the reasoning is worth keeping because it has now been paid for twice. The wall
+  // these are scratched into is centred on BASEMENT.x1 = -13.8 and 0.2 thick, so the plaster face is at
+  // -13.900 — and a 14 mm mark centred at -13.890 spans -13.897..-13.883, which is 3 mm *behind* that
+  // face. Fifty-one marks the whole point of the room, invisible except where the depth test went the
+  // other way. Centred 5 mm in front of the face each one stands proud and reads as cut in.
+  //
+  // The face moved. A damaged-wall facing now hangs on this run with its front at -13.960, so the -13.895
+  // that was 5 mm proud of plaster became 5.8 cm behind the visible wall — the same bug, at ten times the
+  // size. -13.955 is that same 5 mm, measured from the surface the player actually sees.
   for (let g = 0; g < 10; g++) {
     const gy = BASE_Y + 0.62 - Math.floor(g / 5) * 0.26;
     const gz = 2.45 + (g % 5) * 0.46;
-    for (let k = 0; k < 5; k++) b.box(m.dark, 0.014, 0.19, 0.012, -13.895, gy, gz + k * 0.075);
+    for (let k = 0; k < 5; k++) b.box(m.dark, 0.014, 0.19, 0.012, -13.955, gy, gz + k * 0.075);
   }
-  b.box(m.dark, 0.016, 0.2, 0.014, -13.895, BASE_Y + 0.36, 4.78);
+  b.box(m.dark, 0.016, 0.2, 0.014, -13.955, BASE_Y + 0.36, 4.78);
   at['basement.tally'] = new Vector3(-14.16, BASE_Y + 0.55, 3.6);
 
-  // Scuff arc where the shelf has been dragged back and forth. Mentioned in the note; not marked.
-  b.ring(m.dark, 0.88, 1.02, 16, -21.24, BASE_Y + 0.012, PLACE.shelf.z, -Math.PI / 2, Math.PI);
+  // Wear along the screen's track, where the leaves have been slid back and forth. Mentioned in the
+  // note; not marked. It was an arc while a shelf stood here, which was right for something dragged on
+  // one corner and wrong for two leaves on a rail — so it is a straight streak now, 3.2 m of it centred
+  // on the doorway, which is the span the leaves actually cover between shut and fully open.
+  b.box(m.dark, 0.10, 0.008, 3.2, -21.66, BASE_Y + 0.012, PLACE.doors.z);
 
-  // Support post, crates, coal. The room has to look used or the shelf looks placed.
+  // Support post, crates, coal. The room has to look used or the screen looks placed.
   b.cyl(m.wood, 0.16, 0.16, 2.8, 8, -18.0, BASE_Y + 1.4, 2.3);
   aabbs.push(aabbOf(-18.0, BASE_Y, 2.3, 0.17, 0.17, BASE_Y + 2.8));
   // The crates are in the two corners the south wall does not use, and that is not decoration. They stood

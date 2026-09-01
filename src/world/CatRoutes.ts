@@ -15,7 +15,7 @@
  * - **Edges are listed as chains, not pairs.** `'a b c'` is two edges. The rooms are mostly rails
  *   and loops, and writing them as chains keeps the shape of the room visible in the source.
  *
- * The one gated edge is the ritual room's, behind the shelf the player has to push aside. It is the
+ * The one gated edge is the ritual room's, through the doorway the sliding screen covers. It is the
  * only reason CatRoamer needs to know anything about puzzle state.
  */
 
@@ -82,16 +82,27 @@ const BASEMENT: readonly (readonly [string, number, number])[] = [
   ['bs_in', -14.8, 1.05],
   ['bs_bench', -16.4, -0.6],
   ['bs_mid', -19.0, 1.0],
-  ['bs_shelf', -21.4, 1.0],
+  // The cellar's west end, where the push-aside shelf used to stand. bs_screen is the second node, in
+  // front of the sliding screen and on the doorway's own centreline, because the approach has to be
+  // square to the opening: the parked leaves sit at x -21.82..-21.72 and carry no collider of their
+  // own, so a diagonal that clips one is invisible to the route check and the cat walks through paper.
+  // Straight in along z = 2.3 keeps it inside the z 1.669..2.875 gap the open leaves leave, with 0.48 m
+  // a side for a cat 0.30 m wide.
+  ['bs_west', -21.4, 1.0],
+  ['bs_screen', -21.45, 2.3],
   // Pulled 40 cm east and 1.4 m south of the north wall it used to run along. basement.glb's shelving,
   // washing machine and vacuum stand shoulder to shoulder from x -19.68 to -18.22 and out to z 6.39,
   // which buried the old (-19.0, 6.1) inside the vacuum: both ends of the north rail were clear, so
   // nothing showed until the segments themselves were swept.
   ['bs_n_w', -18.6, 4.7],
   ['bs_n_e', -14.8, 6.1],
-  // Ritual room, behind the shelf: a loop round the altar with a spur to its east face. rt_thr is
-  // west of x = -22 rather than on it, to clear the shelf's *unmoved* box, which ends at -21.21.
-  ['rt_thr', -22.1, 2.3],
+  // Ritual room, behind the screen: a loop round the altar with a spur to its east face. rt_thr stands
+  // at -22.4 rather than on the doorway at -22, to clear the screen's blocker, which fills the opening
+  // at x -22.14..-21.86 for as long as it is shut. That clearance matters even though the edge through
+  // the doorway is gated: checkRoutes sweeps rt_thr-rt_in with the screen still closed, and a node
+  // standing inside a collider fails every edge that touches it. The old -22.1 sat 4 cm inside the
+  // blocker, which unlinked rt_thr-rt_in on load and took the whole ritual loop out of the graph.
+  ['rt_thr', -22.4, 2.3],
   ['rt_in', -23.0, 2.3],
   ['rt_altar_e', -25.4, 2.3],
   ['rt_se', -23.0, 0.4],
@@ -123,8 +134,10 @@ export const CAT_NODES: readonly CatNode[] = [
  * The omissions matter as much as the entries, and each of these was tried and rejected against the
  * furniture: lv_ne–lv_w crosses the dining table, lv_sw–lv_thr crosses the bookshelf, a direct
  * hw_west–bd_thr diagonal cuts the bedroom door leaf, rt_se–rt_sw run at z = 1.0 passes 0.02 m from the
- * altar, rt_altar_e–rt_sw crosses the altar itself, and a north rail at x = -21.4 is blocked by the
- * shelf once it has been pushed aside. bs_mid–bs_n_w clipped the support post until bs_n_w moved off
+ * altar, rt_altar_e–rt_sw crosses the altar itself, and a direct bs_west–rt_thr diagonal — the obvious
+ * way through the ritual doorway — clips the wall's solid stretch south of the opening at x
+ * -22.10..-21.90 / z -2.10..1.40 and grazes a parked leaf on the way, which is what bs_screen is for.
+ * bs_mid–bs_n_w clipped the support post until bs_n_w moved off
  * the north wall; it is clear from (-19.0, 1.0) to (-18.6, 4.7) and nowhere near clear to the old one.
  *
  * lv_thr–lv_se is the one the route check caught rather than the eye: the living room's south wall
@@ -141,7 +154,7 @@ export const CAT_CHAINS: readonly string[] = [
   'bd_westmid bd_nw bd_mid',
   'hw_liv lv_thr lv_in lv_c lv_nw lv_ne lv_e_n lv_e_s lv_se lv_in',
   'lv_c lv_w lv_sw',
-  'hw_west st_land st_a st_b st_bot bs_in bs_mid bs_shelf',
+  'hw_west st_land st_a st_b st_bot bs_in bs_mid bs_west bs_screen',
   'bs_in bs_bench bs_mid',
   // The north rail is back. It was two spurs for as long as two hand-built crates stood mid-floor at
   // (-17.6, 4.7) and (-16.7, 5.3): the only opening left was the 0.18 m diagonal between the barrel's
@@ -155,5 +168,5 @@ export const CAT_CHAINS: readonly string[] = [
   'rt_in rt_se rt_sw rt_nw rt_ne rt_in',
 ];
 
-/** The doorway the shelf hides. Walkable only once the player has pushed it aside. */
-export const CAT_GATED: readonly (readonly [string, string])[] = [['bs_shelf', 'rt_thr']];
+/** The doorway the screen covers. Walkable only once the player has slid it aside. */
+export const CAT_GATED: readonly (readonly [string, string])[] = [['bs_screen', 'rt_thr']];

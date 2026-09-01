@@ -83,18 +83,36 @@ const PLAN = {
   'fred_-_the_cat.glb': { out: 'cat-still.glb', ratio: 0.06, error: 0.03 },
   'bed_model_002.glb': { out: 'bed.glb', ratio: 0.15, error: 0.015 },
   // The viewmodel arms: 0.35 m from the near plane, never culled, and the object on screen in every
-  // single frame of the game. It replaces hand.glb, an unskinned open hand whose straight fingers no
-  // Euler could curl — this is a 47-joint rig whose *stored rest pose* already closes the digits, which
-  // is the whole reason for the swap, and it costs 9.8k triangles against hand.glb's 41.2k.
+  // single frame of the game. It replaces arms_throwing.glb — the *same* 47-joint Sketchfab rig, bone
+  // names identical down to R_pink4_045, so HeldLantern measures and pins it through the unchanged code
+  // path; what differs is the stored pose. arms_throwing held the follow-through of a two-handed throw,
+  // where the fist that carries the lantern is mid-swing; this one is authored as a held first-person
+  // pose. It is also cheaper: 7.0k triangles against 9.8k, and it ships no animation at all.
   //
   // No `ratio`, deliberately. weld() + simplify() collapse vertices without regard for JOINTS_0 /
   // WEIGHTS_0, so a skinned primitive comes back with blended influences on the seams — on fingers at
   // 35 cm that reads as melted knuckles. It is already the cheapest hand this game has shipped.
   //
-  // `dropAnims` removes the one 0.667 s "throw" clip: the game holds a pose and never plays it, and
-  // with the clip gone the IK helper nodes it was the only reference to (R_wrist_Goal, L_wrist_Goal,
-  // both arm poles) fall out in prune() as well.
-  'arms_throwing.glb': { out: 'arms.glb', dropAnims: true },
+  // `dropAnims` is a no-op on this file (it has no clips) and stays as insurance: the viewmodel holds a
+  // single pinned pose, so a clip arriving in some future re-export would fight HeldLantern's grip
+  // measurement rather than be ignored, and it would drag IK helper nodes back in through prune().
+  //
+  // Its colour map needs flattenSpecGloss() in pass A — this is the one asset here that stores its
+  // diffuse only inside KHR_materials_pbrSpecularGlossiness, which three.js cannot read.
+  //
+  // `tone` is the other thing pass A has to do to this file, and it is not cosmetic polish. This atlas is
+  // bimodal where arms_throwing's was unimodal: 27% of its texels sit below luma 24 (black glove, black
+  // cloth sleeve) against 3% on the old one, with a hole where the mid-tones should be. The lantern
+  // PointLight is a camera child sitting to the *right* of the arm, so the face of the forearm the player
+  // sees has a negative dot-N-L and is lit by ambient alone — measured on the device at 0.47 ambient
+  // irradiance against 0.26 diffuse. Ambient times a near-black texel times ARMS_ALBEDO lands under
+  // FilmGrade's own black floor, and because the arm sits in the bottom-right corner the vignette takes
+  // off up to another half. What reaches the screen is a featureless black wedge with two brightly lit
+  // fingertips — maximum contrast, no readable texture — on the one object present in every frame.
+  //
+  // The LUT is matched to arms_throwing.glb's own histogram, which is why that file stays in `glb files/`
+  // although nothing ships it any more: it is the reference for what this arm is supposed to look like.
+  'fps_arms.glb': { out: 'arms.glb', dropAnims: true, tone: 'tools/tone-lut-arms.json' },
   'an_animated_cat.glb': { out: 'cat.glb' },
   'cat_walk.glb': { out: 'cat-walk.glb' },
   'hexagonal_table_01.glb': { out: 'table.glb' },
@@ -136,6 +154,23 @@ const PLAN = {
   // render blown off it. Both are single-material panels, so any triangle they have is silhouette.
   'damaged_wall.glb': { out: 'wall-damaged.glb' },
   'horror_wall_clean.glb': { out: 'wall-horror.glb' },
+  // The sliding screen that hides the ritual doorway, replacing the procedural push-aside shelf. It
+  // ships one clip, "Take 001", which slides the leaves apart — so no `ratio` and no `dropAnims`: weld()
+  // and simplify() are what would break a clip that translates whole nodes, and the clip is the point of
+  // the asset. HouseScene drives it from the interaction instead of playing it on load.
+  'sliding_japanese_doors_animated.glb': { out: 'doors-sliding.glb' },
+  /**
+   * The wooden floor, and the one entry here that ships an *image* rather than a model — `bake` instead
+   * of `out`, handled by pass A2 (tools/bake-floor.mjs) and never reaching the geometry loop.
+   *
+   * It cannot ship as geometry at any bound. 187,716 triangles cover a 2.89 x 1.94 m patch, the house has
+   * ~470 m2 of floor, and 84 copies of that patch is 15.7 M triangles against a whole-house budget of
+   * 35k — so even a 99% collapse would cost more than every other asset in this table put together, and
+   * what a collapse takes first is exactly the plank edges that are the only thing anyone looks at on a
+   * floor. A floor is flat: all of its detail is in the map. See bake-floor.mjs for why the map has to be
+   * baked from above rather than lifted out of the file.
+   */
+  'wooden_flooring.glb': { bake: 'public/assets/textures/floor-wood.webp', px: 1024 },
   // Bedroom dressing for the ground floor. Beds and a closet are all slab-and-frame shapes where the
   // detail is painted rather than modelled, so they take a collapse the way bed_model_002 does. The
   // bound is looser than the hero assets' because nobody inspects the underside of a bed in the dark —
@@ -282,19 +317,50 @@ function thinCardHair(doc, rules) {
 
 async function main() {
   const plan = Object.entries(PLAN).filter(
-    ([name, cfg]) => only.length === 0 || only.includes(name) || only.includes(cfg.out),
+    ([name, cfg]) => only.length === 0 || only.includes(name) || only.includes(cfg.out) || only.includes(cfg.bake),
   );
   if (plan.length === 0) {
     console.error(`nothing in the plan matches: ${only.join(' ')}`);
     process.exit(1);
   }
+  // An entry ships either a model (`out`, the geometry loop below) or a baked image (`bake`, pass A2).
+  // Never both: a bake entry's source is far too heavy to ship as geometry, which is why it is baked.
+  const geoPlan = plan.filter(([, cfg]) => cfg.out);
+  const bakePlan = plan.filter(([, cfg]) => cfg.bake);
+
+  // Pass A2, before the texture pass so a bake failure stops the run early. Own process for the same
+  // reason pass A has one — see bake-floor.mjs — and reading the *raw* file, not TMP: the bake resolves
+  // the source atlas's UV packing itself, so pass A's re-encode would only cost time here.
+  for (const [name, cfg] of bakePlan) {
+    const bake = spawnSync(
+      process.execPath,
+      ['tools/bake-floor.mjs', join(SRC, name), cfg.bake, String(cfg.px ?? 1024)],
+      { stdio: 'inherit' },
+    );
+    if (bake.status !== 0) {
+      console.error(`bake failed for ${name} (exit ${bake.status})`);
+      process.exit(bake.status ?? 1);
+    }
+  }
+  if (geoPlan.length === 0) return;
 
   // Pass A, in its own process. One invocation for the whole batch: the reduction is relative to each
   // image's own size, so there is nothing left to group by. inherit so its table and any texture
-  // failures reach the terminal.
+  // failures reach the terminal. The tone map goes as JSON rather than as a flag per asset because it is
+  // per-asset data, and only the assets in this run's plan are listed — a LUT for an asset nobody asked
+  // to rebuild would be read for nothing.
   const texPass = spawnSync(
     process.execPath,
-    ['tools/shrink-textures.mjs', SRC, TMP, String(TEX_SCALE), plan.map(([name]) => name).join(',')],
+    [
+      'tools/shrink-textures.mjs',
+      SRC,
+      TMP,
+      String(TEX_SCALE),
+      geoPlan.map(([name]) => name).join(','),
+      JSON.stringify(
+        Object.fromEntries(geoPlan.filter(([, cfg]) => cfg.tone).map(([name, cfg]) => [name, cfg.tone])),
+      ),
+    ],
     { stdio: 'inherit' },
   );
   if (texPass.status !== 0) {
@@ -313,7 +379,7 @@ async function main() {
   for (const name of staged) if (!PLAN[name]) console.error(`! no plan entry for ${name} — not shipped`);
 
   const rows = [];
-  for (const [name, cfg] of plan) {
+  for (const [name, cfg] of geoPlan) {
     if (!staged.has(name)) {
       console.error(`! missing ${name}`);
       continue;

@@ -58,10 +58,8 @@ import {
   makeCasing,
   makeClock,
   makeCodeBox,
-  makeDoorLeaf,
   makeFixtureMats,
   makeGate,
-  makeShelf,
   type SymbolKind,
 } from '@/world/Fixtures';
 import { GameState, KEY_NAME, KEY_OF, type KeyId } from '@/game/GameState';
@@ -71,6 +69,7 @@ import { installModels } from '@/world/ModelProps';
 import { armDaayan } from '@/world/DaayanKnife';
 import { armUpperDoor } from '@/world/UpperDoor';
 import { armInnerDoor } from '@/world/InnerDoor';
+import { armRitualDoors } from '@/world/RitualDoors';
 import { hingeMainGate } from '@/world/MainGate';
 import { armNoiseProps, type NoisePropHandles } from '@/world/NoiseProps';
 import { armHiding } from '@/world/Hiding';
@@ -250,22 +249,11 @@ export function buildHouseScene(
   // threshold, which is four extra taps per lap of the house and buys nothing — and a house left
   // with every door half open is its own piece of storytelling.
   //
-  // Casing 2 is BEDROOM_DOOR and is not in the list: an imported leaf hangs in that opening now, ajar
-  // to the same side and by the same policy, from the 'door-bedroom' row in ModelProps. Its casing is
-  // still built here — the import is a leaf, not a frame — so only the procedural leaf goes, or the two
-  // would stand in one doorway.
-  const doorLeaves: Array<[number, -1 | 1, number]> = [
-    // Casing 3 (LIVING_DOOR) uses the imported `door-living` leaf, not a generated one.
-    [4, -1, 1.15],
-    [5, 1, 1.25],
-  ];
-  for (const [ci, hinge, angle] of doorLeaves) {
-    const spec = casings[ci];
-    if (!spec) continue;
-    const leaf = makeDoorLeaf(fx, spec, hinge, angle);
-    leaf.pivot.rotation.y += leaf.openAngle;
-    fixtures.add(leaf.pivot);
-  }
+  // No procedural leaf is generated any more: every doorway that has one now hangs an imported leaf from
+  // ModelProps, ajar to the same side and by the same policy — 'door-bedroom' and 'door-living' in
+  // casings 2 and 3, 'door-cellar' and 'door-basement' in casings 4 and 5. The casings themselves are
+  // still built here, because each of those imports is a leaf and not a frame. makeDoorLeaf is only
+  // reachable through this file, so it went with the array; makeCasing did not.
 
   // --- The porch beyond the gate ---
   // Somewhere to actually arrive. Without it the gateway opens onto no floor at all, and the
@@ -295,13 +283,11 @@ export function buildHouseScene(
   const overlay = new OverlayLayer();
   const interact = new InteractionSystem(engine);
   const hiding = armHiding({ player: controller, interact });
-  // The bedroom's procedural wardrobe exists synchronously, unlike the imported closet. Register its
-  // authored box now; imported beds and closet-old.glb join through the model-placement hook below.
-  hiding.addBox(
-    'bedroom-wardrobe',
-    'wardrobe',
-    new Box3(new Vector3(-1.78, 0, 5.84), new Vector3(-1.12, 2.05, 7.36)),
-  );
+  // No authored hiding box is registered here any more. The one that was — 'bedroom-wardrobe', the box of
+  // the procedural almirah at (-1.45, 6.6) — existed only because that wardrobe was built synchronously
+  // and so could not go through the model-placement hook. HouseProps no longer builds it, and the
+  // bedroom's wardrobe pocket is closet-old.glb at (-2.0, 9.75), which Hiding picks up through
+  // WARDROBE_NAMES like every other imported hiding spot. Beds join the same way.
   const tweens: Tween[] = [];
   const tween = (dur: number, apply: (k: number) => void): void => {
     tweens.push({ t: 0, dur, apply });
@@ -478,30 +464,13 @@ export function buildHouseScene(
     },
   });
 
-  // --- The shelf over the ritual doorway ---
-  const shelf = makeShelf(fx, PLACE.shelf.x, PLACE.shelf.z, BASE_Y);
-  fixtures.add(shelf.group);
-  aabbs.push(shelf.aabb);
-  let shelfMoved = false;
-  interact.add({
-    id: 'basement.shelf',
-    pos: shelf.anchor,
-    reach: 2.0,
-    label: () => (shelfMoved ? null : 'Push the shelf aside'),
-    onUse: () => {
-      if (shelfMoved) return;
-      shelfMoved = true;
-      const z0 = shelf.group.position.z;
-      const { minZ, maxZ } = shelf.aabb;
-      tween(1.5, (k) => {
-        shelf.group.position.z = z0 + k * 2.1;
-        shelf.aabb.minZ = minZ + k * 2.1;
-        shelf.aabb.maxZ = maxZ + k * 2.1;
-      });
-      state.raiseTension('DISTURBING');
-      hud.showToast('Cold air. There is a doorway behind it.', 3.4);
-    },
-  });
+  // --- The screen over the ritual doorway ---
+  // Only the flag lives here. The screen itself is doors-sliding.glb, so everything about it — the
+  // blocker filling the opening, the prompt, and the mixer that plays its own eased slide — is built in
+  // the placement hook below, once the model exists and its fit has been applied. See RitualDoors.
+  let ritualOpen = false;
+  /** The screen's per-frame mixer tick, null until it is placed and if its clip did not arrive. */
+  let slideScreen: ((dt: number) => void) | null = null;
 
   // --- Everything readable ---
   // One registration per CLUES entry that HouseProps published an anchor for, so a clue that has
@@ -566,7 +535,7 @@ export function buildHouseScene(
 
   // --- Hand the world to the player ---
   // The controller holds both arrays by reference, which is what lets the gate blocker and the
-  // shelf collider be animated by mutating the objects already inside them.
+  // ritual screen's blocker be animated, or dropped, by mutating the objects already inside them.
   controller.setAabbs(aabbs);
   controller.setFloors(floors);
   controller.warpTo(new Vector3(SPAWN.x, SPAWN.y, SPAWN.z), SPAWN.yaw);
@@ -593,7 +562,7 @@ export function buildHouseScene(
   let noiseProps: NoisePropHandles | null = null;
   // The knife goes in on the placement hook rather than here, because it is measured in her bone
   // units and those only mean anything once her fit has written the root scale.
-  const models = installModels(modelLoader, scene, engine.camera, aabbs, fx.shadow, reportError, (name, root) => {
+  const models = installModels(modelLoader, scene, engine.camera, aabbs, fx.shadow, reportError, (name, root, clips) => {
     if (name === 'daayan.glb') armDaayan(modelLoader, root, reportError);
     if (name === 'bed.glb') {
       root.updateWorldMatrix(true, true);
@@ -662,6 +631,20 @@ export function buildHouseScene(
         onError: reportError,
       });
     }
+    if (name === 'doors-ritual') {
+      // The one placement that wants the file's clips: the slide is a baked ease this scene must not
+      // re-ease, so RitualDoors builds its own mixer and hands back the tick the frame loop calls.
+      slideScreen = armRitualDoors(root, clips, {
+        aabbs,
+        interact,
+        toast: (msg) => hud.showToast(msg, 3.4),
+        onError: reportError,
+        onOpen: () => {
+          ritualOpen = true;
+          state.raiseTension('DISTURBING');
+        },
+      });
+    }
     if (name === 'gate-main.glb') {
       swingGate = hingeMainGate(root);
       // Worth reporting rather than swallowing: the blocker still drops, so the player could still
@@ -687,14 +670,14 @@ export function buildHouseScene(
   // also what jolts the lantern, so the sample and the swing start on the same frame.
   const footsteps = installFootsteps(audio, engine.camera);
   // The roaming cat owns cat-walk.glb outright — its row came out of MODEL_PLACEMENTS — and reads
-  // shelfMoved so it can follow the player into the ritual room once that doorway exists.
+  // ritualOpen so it can follow the player into the ritual room once that doorway exists.
   const cat = installCat(
     modelLoader,
     audio,
     scene,
     engine.camera,
     aabbs,
-    () => shelfMoved,
+    () => ritualOpen,
     reportError,
   );
 
@@ -714,6 +697,9 @@ export function buildHouseScene(
     // Also before the overlay return, and for the same reason: the cat is mid-stride between two
     // waypoints, and freezing it while the player reads a note would leave it standing in a doorway.
     cat.update(dt);
+    // The ritual screen, once. It is paused until the player uses it and re-paused by the clip's own
+    // clampWhenFinished, so outside those 1.3 seconds this call costs a null check and a timeScale of 0.
+    slideScreen?.(dt);
 
     // Tweens run backwards so a finished one can be spliced out mid-loop.
     for (let i = tweens.length - 1; i >= 0; i--) {

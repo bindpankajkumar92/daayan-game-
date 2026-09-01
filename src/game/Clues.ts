@@ -363,14 +363,14 @@ export const CLUES: Record<string, ClueSpec> = {
   'basement.draught': {
     prompt: 'Read the note',
     raises: 'DISTURBING',
-    firstToast: 'Behind the jars.',
+    firstToast: 'Behind the paper.',
     doc: {
       title: 'A note weighted under a jar',
       sub: 'Basement, on the workbench',
       style: 'note',
       lines: [
-        'The cold comes in behind the jars, not under the door.',
-        'I have stopped putting the shelf back exactly. There is no one left in this house to notice the marks on the floor.',
+        'The cold comes in behind the paper screen, not under the door.',
+        'I have stopped sliding it quite shut. There is no one left in this house to notice the marks on the floor.',
       ],
     },
   },

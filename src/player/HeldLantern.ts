@@ -19,7 +19,7 @@
  *   arms.glb is a 47-joint rig whose stored rest rotations already curl the fingers, so it is drawn
  *   with no AnimationMixer at all and the fist costs nothing — which is also exactly what "without
  *   animation" asked for. What it costs instead is that neither the scale nor the position can come
- *   from fitToHeight: the *posed* box is longest on x (72.542 rig units against 70.207 on z), so a
+ *   from fitToHeight: the *posed* box is longest on x (57.199 rig units against 56.151 on z), so a
  *   longest-axis fit would normalise the shoulder span rather than the arm, and the box centre lands
  *   in the forearms rather than in the hand. Both are read off the bones — see PALM_SPAN, GRIP_BONES.
  *
@@ -66,11 +66,12 @@ import { fitToHeight, type ModelLoader } from '@/world/ModelLoader';
  * 2.6 cm of the fount is cropped by the bottom edge — deliberate, and the same crop every game gives a
  * carried light. The other bound is the controller's 0.35 m collision radius, which has no
  * depenetration, so the camera can rest exactly that far from a wall face and anything past it draws
- * inside the plaster: the deepest geometry here is the lantern's far face at -0.300 and the fingertips
- * at -0.291, leaving about 3.5 cm of margin for SWING.max to swing into. The near plane is 0.1, and
- * the arm crosses it at x = 0.176..0.231 where the frame is only 0.147 wide, so the cross-section is
+ * inside the plaster: the deepest geometry here is the knuckles at -0.312, just past the lantern's far
+ * face at -0.300, leaving about 3.8 cm of margin for SWING.max to swing into. The near plane is 0.1,
+ * and the arm crosses it at x = 0.174..0.253 where the frame is only 0.147 wide, so the cross-section is
  * off the right edge and there is no hollow forearm in the corner. That last one is what x is really
- * for; moving x inward re-opens it.
+ * for; moving x inward re-opens it. (These are measured on the shipped rig; a re-export moves them,
+ * which is why the numbers are written down rather than trusted.)
  */
 const HOLD = { x: 0.185, y: -0.045, z: -0.27 };
 
@@ -117,11 +118,11 @@ const PIVOT_FRAC = 0.95;
 const PALM_SPAN = 0.052;
 const SPAN_BONES: readonly [string, string] = ['R_point1_030', 'R_pink1_042'];
 /** The span these two bones measure in the shipped file, if the rig is ever renamed under us. */
-const SPAN_FALLBACK = 7.212;
+const SPAN_FALLBACK = 7.148;
 
 /**
  * The eight bones whose mean is the centre of the curled fingers — the first and third joint of each
- * of the four digits. Their mean is [-20.62, -0.20, 2.51] in rig units, which is the point that gets
+ * of the four digits. Their mean is [-16.75, -5.35, 28.55] in rig units, which is the point that gets
  * pinned to HOLD.
  *
  * Averaging both joint rows rather than taking the knuckles alone matters: the knuckles alone sit on
@@ -139,12 +140,16 @@ const GRIP_BONES = [
   'R_ring3_040',
   'R_pink3_044',
 ];
-const GRIP_FALLBACK = new Vector3(-20.62, -0.2, 2.51);
+const GRIP_FALLBACK = new Vector3(-16.75, -5.35, 28.55);
 
 /**
- * The other arm. The source clip is a two-handed throw, so the left arm is mid-swing across the frame
- * with nothing in it — collapsing it is cheaper than editing the mesh, and it is invisible either way
- * because its shoulder measures 0.49 m *behind* the eye.
+ * The other arm, and the reason it is not simply left in: this rig is a *pair* of first-person arms, so
+ * the left one is posed forward alongside the right and lands squarely on screen — x -0.140..0.053 in
+ * camera space, well inside the +/-0.397 the frame allows at that depth — holding nothing. Collapsing
+ * the bone is cheaper than editing the mesh, and it is what makes this a one-handed viewmodel.
+ *
+ * Everything under L_arm_01 falls to that bone's own origin, which sits 6.9 cm *behind* the eye, so the
+ * residual speck is on the wrong side of the near plane and never rasterises.
  *
  * A thousandth rather than zero, on purpose: a zero scale makes the bone matrix singular, and once that
  * is multiplied by its inverse-bind matrix the skinning matrix can come out full of NaNs on hardware
@@ -215,6 +220,41 @@ const G = 9.81;
 /** See the header: one multiply that stops a fixed-distance point light clipping these to white. */
 const ARMS_ALBEDO = 0.22;
 const LANTERN_ALBEDO = 0.3;
+
+/**
+ * The arm's own self-lift, and the reason the forearm is a forearm instead of a hole in the frame.
+ *
+ * The lantern's PointLight is a camera child at camera-local (0.25, -0.15, +0.1) and the arm hangs at
+ * (0.185, -0.045, -0.27) — beside the light and *in front of* it. Measured on the device, 95% of the
+ * front-facing sleeve vertices sit at NdotL about -0.30: the face the player looks at is the face turned
+ * away from the only real light in the house, and it receives ambient alone (irradiance 0.466 against
+ * 0.263 of diffuse). Then sRGB eats the rest. The atlas is tone-matched in the model pipeline to the
+ * arm this one replaced — mean 70 of 255, see tools/tone-lut-arms.json — but sRGB 70 is linear 0.061,
+ * ARMS_ALBEDO takes another 4.5x off that, and the silhouette measured Y 3.6 with 94.9% of its pixels
+ * below luma 8. Under FilmGrade's black floor that is not a dark arm, it is two lit fingertips floating
+ * in the corner vignette.
+ *
+ * So it is lit from itself, and the number was picked against the old arm rather than against taste.
+ * Both files were rendered from the same pinned camera in the same room and scored over the silhouette
+ * only: arms_throwing as it actually shipped came out at Y 5.5, and the new arm at 0.25 -> Y 12.0,
+ * 0.35 -> Y 15.6, 0.50 -> Y 20.6, 0.70 -> Y 27.1. Side by side, 0.50 turns the sleeve into grey velvet
+ * that is plainly brighter than anything the old arm ever was, and 0.70 looks lit from nowhere. 0.35 is
+ * the one that keeps the old arm's tonal register — still a dark sleeve in a dark room — while the folds
+ * and the cuff seam are unmistakably there. The peach of the fingers never clips at any of them, because
+ * the tone match pulled the highlights down (255 -> 204) as well as the shadows up.
+ *
+ * Worth recording why the old arm needed none of this: it is gloved to the fingertips. Every texel the
+ * player could see was cloth, so ambient-only crushed all of it together and the result read as one dark
+ * shape — dim, but coherent. This rig's hand is bare. Skin at the tone match's top end next to cloth at
+ * its bottom end is what "contrast bahut zyada" actually was, and lifting the cloth off the floor is the
+ * half of that a LUT cannot do, because no curve can put light on an unlit surface.
+ *
+ * Through the base colour map, for the reason LANTERN_GLOW spells out below — a flat emissive layer is
+ * exactly the "no texture at all" complaint this whole change exists to answer. And it is a constant
+ * rather than a lit/unlit pair because there is no lantern button any more (see TouchControls), so
+ * there is no state in which a self-lit arm could be caught glowing in the dark.
+ */
+const ARMS_GLOW = 0.35;
 
 /**
  * How much of its own light the lantern shows on itself. Without this it is a dark shape hanging in
@@ -404,8 +444,8 @@ export function installHeldLantern(
   hold.add(swing);
 
   /**
-   * The arm. rotation.y is a half turn because the rig faces +Z (its shoulders measure z = -61 and its
-   * hands z = 0..+10) while the camera looks down -Z; the same flip is what moves the rig's right arm,
+   * The arm. rotation.y is a half turn because the rig faces +Z (its shoulders measure z = -19 and its
+   * hands z = +26..+34) while the camera looks down -Z; the same flip is what moves the rig's right arm,
    * which lives on -x in the file, over to screen-right. `position` is filled in once the bones have been
    * measured and is the negated grip point, which is what puts the fist on `hold`. Any rotation added
    * here is free: the grip is measured *after* it and so stays pinned whatever this is set to.
@@ -516,7 +556,17 @@ export function installHeldLantern(
       const span = a && b ? a.getWorldPosition(vA).distanceTo(b.getWorldPosition(vB)) : SPAN_FALLBACK;
       root.scale.setScalar(PALM_SPAN / (span > 1e-6 ? span : SPAN_FALLBACK));
 
-      dim(root, ARMS_ALBEDO);
+      for (const m of dim(root, ARMS_ALBEDO)) {
+        // See ARMS_GLOW. White emissive, not the flame's GLOW_HEX: the map is doing the colouring here,
+        // and this arm's skin is already warm — tinting the lift as well would push the fingers orange.
+        // Guarded like the lantern's, for the same two reasons.
+        if (m.map && !m.emissiveMap) {
+          m.emissiveMap = m.map;
+          m.emissive.setScalar(1);
+          m.emissiveIntensity = ARMS_GLOW;
+          m.needsUpdate = true;
+        }
+      }
       arms.add(root);
 
       // The grip, in `hold`'s space, so `arms` can be slid until the fist lands on the pivot.

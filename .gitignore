@@ -42,3 +42,9 @@ glb files/
 .models-backup-0.8/
 audio files/
 device-shot.png
+
+# Scratch: one-off asset-inspection scripts and the images they dump. Dot-prefixed by hand so they
+# sort out of the way; several also import `sharp`, which is not a dependency, so they would not run
+# from a fresh clone anyway.
+tools/.*.mjs
+.tmp-img*.webp

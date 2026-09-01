@@ -53,6 +53,11 @@ export interface WallRun {
    * out through the far wall into the sky.
    */
   collideOnly?: boolean;
+  /**
+   * Render the structural wall, but let an imported facing built from this run own collision.
+   * Unlike `collideOnly`, this keeps a sealed backing behind the irregular model surface.
+   */
+  modelCollision?: boolean;
 }
 
 export interface Segment {

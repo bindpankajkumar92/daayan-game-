@@ -24,7 +24,10 @@ import {
   Group,
   Mesh,
   MeshLambertMaterial,
+  MirroredRepeatWrapping,
   PlaneGeometry,
+  SRGBColorSpace,
+  TextureLoader,
   type Material,
   type Texture,
 } from 'three';
@@ -36,9 +39,29 @@ import { ROOMS, UPPER_PATCH, houseFloors, stairTreads } from './HouseRooms';
 
 /** World size one texture repeat covers. Wall plaster at 2.4 m ≈ 210 px/m from a 512 px map. */
 const WALL_TILE = 2.4;
-const FLOOR_TILE = 1.6;
+/** Ceilings and the upper flat's ceiling patches. Floors have their own pair below. */
+const CEIL_TILE = 1.6;
 const TRIM_TILE = 0.9;
 const SKIRT_H = 0.14;
+
+/**
+ * The floor's photographed wooden boards, and the one map in the house that is *not* square.
+ *
+ * FLOOR_MAP is baked from wooden_flooring.glb by tools/bake-floor.mjs rather than sampled from the
+ * model at runtime, and the reason is arithmetic rather than taste: that file is 187,716 triangles
+ * over a 2.891 x 1.944 m patch, this house has some 470 m2 of floor, and 84 copies of the patch is
+ * 15.7 M triangles against a whole-house budget of about 35 k. So the boards arrive as an image of
+ * that exact patch — rasterised top-down through the model's own UVs, which is what makes it usable
+ * as a tile at all, since the source map is an atlas rather than a repeating texture.
+ *
+ * Baked at a known metres-per-pixel, so the two tile sizes below are the patch's real dimensions and
+ * the boards come out life-size: 1024 x 689 px over 2.891 x 1.944 m is 354 px/m on both axes. They
+ * are separate constants for the same reason they are not 1.6: a single number would stretch a plank
+ * on one axis, and a plank is the one thing in this house whose proportions the player knows.
+ */
+const FLOOR_MAP = '/assets/textures/floor-wood.webp';
+const FLOOR_TILE_X = 2.891;
+const FLOOR_TILE_Z = 1.944;
 
 /**
  * Largest edge, in metres, allowed on a floor, ceiling or wall triangle.
@@ -200,7 +223,6 @@ export function buildHouse(anisotropy: number): BuiltHouse {
   const texWallWarm = pick(makePlaster(4242, 'warm'));
   const texWallCool = pick(makePlaster(1717, 'cool'));
   const texFloorWood = pick(makeWoodFloor(1337, 8));
-  const texFloorStone = pick(makePlaster(2929, 'cool'));
   const texCeil = pick(makeCeilingBoards(7171));
   const texTrim = pick(makeWoodPanel(909, 0.7));
   const texDoor = pick(makeWoodPanel(515, 0.9));
@@ -242,15 +264,78 @@ export function buildHouse(anisotropy: number): BuiltHouse {
     polygonOffsetUnits: units,
   });
 
+  /**
+   * The floors, both tones, over one map.
+   *
+   * `color` is a tint and not a brightness fix, but it is doing the work of one. floor-wood.webp means
+   * 162,148,130 — luma 149.4, i.e. 0.3037 in linear, three quarters of the warm plaster's 0.40 — which
+   * is a photographed board in daylight and reads as a pale slab in a house lit by one lantern. The
+   * procedural floor it replaces sat near 0.08 linear, and a floor four times darker than the walls is
+   * what a derelict house looks like from the inside. 0x9a9a9a is 0.3232 in linear, so the boards land
+   * at 0.098 — the old floor's value, reached by scaling the photograph rather than by regrading it,
+   * which is what keeps the grain and the plank seams intact.
+   *
+   * floorStone is the same map under the cellar's existing cool tint rather than its own texture: the
+   * request was the whole game's floor, and one map for both tones is one less 1024 canvas at startup
+   * and one less texture bound per frame. 0x8f9096 puts it at 0.083 to 0.092 linear with the blue
+   * fractionally ahead of the red, so the basement's boards read as the same timber gone cold.
+   *
+   * Both keep their own rung on the depth ladder — see bias() — because that is about which surface
+   * wins a coplanar tie at a doorway, not about what they are made of.
+   */
   const mats = {
     wallWarm: track(new MeshLambertMaterial({ map: texWallWarm, ...bias(WARM_Z) })),
     wallCool: track(new MeshLambertMaterial({ map: texWallCool, color: 0x9aa0a8, ...bias(COOL_Z) })),
-    floorWood: track(new MeshLambertMaterial({ map: texFloorWood, ...bias(WARM_Z) })),
-    floorStone: track(new MeshLambertMaterial({ map: texFloorStone, color: 0x8f9096, ...bias(COOL_Z) })),
+    floorWood: track(new MeshLambertMaterial({ map: texFloorWood, color: 0x9a9a9a, ...bias(WARM_Z) })),
+    floorStone: track(new MeshLambertMaterial({ map: texFloorWood, color: 0x8f9096, ...bias(COOL_Z) })),
     ceil: track(new MeshLambertMaterial({ map: texCeil, ...bias(WARM_Z) })),
     trim: track(new MeshLambertMaterial({ map: texTrim, ...bias(TRIM_Z) })),
     door: track(new MeshLambertMaterial({ map: texDoor, ...bias(TRIM_Z) })),
   };
+
+  /**
+   * Swap the procedural planks for the baked photograph as soon as it arrives.
+   *
+   * A swap rather than a load, because this house has no LoadingManager and deliberately so — models
+   * pop in and the intro is gated on a named handful of them, see ModelPlacement.first. So the floors
+   * are built with makeWoodFloor's canvas already on them and are correct from the first frame; the
+   * webp replaces the *map* on two materials that already exist, at their already-chosen tints, and
+   * the shader signature does not change, so there is neither a black floor for two frames nor a
+   * recompile mid-walk. The UV scaling is FLOOR_TILE_X/Z in both cases: the procedural tile is square
+   * and takes the same numbers happily, so the geometry never has to know which map it is wearing.
+   *
+   * MirroredRepeat, not Repeat. The bake dilates its edges outward to fill the holes between the
+   * model's UV islands, so its two borders do not meet; mirroring reflects them into each other
+   * instead, which costs a faint line of symmetry every 2.891 / 1.944 m and buys a seam-free floor
+   * without hand-retouching the image.
+   *
+   * `disposed` is not paranoia. dispose() runs when the scene is torn down, which on a phone can
+   * easily happen while a 140 kB fetch is still in flight, and assigning a map to a disposed material
+   * would resurrect it in the renderer's cache.
+   */
+  let disposed = false;
+  new TextureLoader().load(
+    FLOOR_MAP,
+    (tex) => {
+      if (disposed) {
+        tex.dispose();
+        return;
+      }
+      tex.colorSpace = SRGBColorSpace;
+      tex.wrapS = MirroredRepeatWrapping;
+      tex.wrapT = MirroredRepeatWrapping;
+      pick(tex);
+      for (const m of [mats.floorWood, mats.floorStone]) {
+        m.map = tex;
+        m.needsUpdate = true;
+      }
+    },
+    undefined,
+    () => {
+      // Reported and no more: the procedural planks are already on the floor and are a floor.
+      console.warn(`floor map failed to load: ${FLOOR_MAP}`);
+    },
+  );
 
   const group = new Group();
   group.name = 'house';
@@ -285,19 +370,41 @@ export function buildHouse(anisotropy: number): BuiltHouse {
             skirtGeos.push(worldBox(skirtBox(b), TRIM_TILE));
           }
         }
-        aabbs.push(boxToAabb(b));
+        if (run.modelCollision !== true) aabbs.push(boxToAabb(b));
       }
     }
     addMerged(wallGeos, room.tone === 'plaster' ? mats.wallWarm : mats.wallCool, `${room.id}-walls`);
     addMerged(skirtGeos, mats.trim, `${room.id}-skirt`);
 
-    // Floor and ceiling as single planes. Their texture is scaled but not world-anchored: one
-    // mesh covers the whole room, so there is no neighbour to line up with.
+    /**
+     * Floor and ceiling as single planes.
+     *
+     * The floor is world-anchored, which it did not need to be while it wore procedural noise: one
+     * mesh covers a whole room, so a tiling that restarts at the room's own corner has no visible
+     * neighbour — except that it does. The 3.2 m archway and the two 1.6 m doorways all show two
+     * rooms' floors at once, and a photographed 2.9 m plank makes a break in the run obvious at a
+     * glance where noise hid it. Anchoring to x0 and z1 makes every floor in the house one continuous
+     * board pattern that happens to be cut into meshes at the walls.
+     *
+     * The v anchor is negative because the plane is laid down by rotation.x = -PI/2, which maps its
+     * local +y onto world -z; so v grows southward and the row that must line up with the world is
+     * the one at z1, not z0. The ceiling below rotates the other way, maps +y onto +z, and keeps its
+     * z0 anchor — that asymmetry is the whole reason the two lines do not read alike.
+     *
+     * The ceiling stays unanchored on CEIL_TILE. Its boards are still procedural, a ceiling is only
+     * ever seen at a grazing angle through a doorway, and this task is the floor.
+     */
     const fw = room.floor.x1 - room.floor.x0;
     const fd = room.floor.z1 - room.floor.z0;
     if (room.modelled !== true) {
       const floorGeo = track(slabPlane(fw, fd));
-      anchorUv(floorGeo, fw / FLOOR_TILE, fd / FLOOR_TILE, 0, 0);
+      anchorUv(
+        floorGeo,
+        fw / FLOOR_TILE_X,
+        fd / FLOOR_TILE_Z,
+        room.floor.x0 / FLOOR_TILE_X,
+        -room.floor.z1 / FLOOR_TILE_Z,
+      );
       const floor = new Mesh(floorGeo, room.tone === 'plaster' ? mats.floorWood : mats.floorStone);
       floor.rotation.x = -Math.PI / 2;
       floor.position.set((room.floor.x0 + room.floor.x1) / 2, y0, (room.floor.z0 + room.floor.z1) / 2);
@@ -307,7 +414,7 @@ export function buildHouse(anisotropy: number): BuiltHouse {
 
     if (room.ceiling) {
       const ceilGeo = track(slabPlane(fw, fd));
-      anchorUv(ceilGeo, fw / FLOOR_TILE, fd / FLOOR_TILE, 0, 0);
+      anchorUv(ceilGeo, fw / CEIL_TILE, fd / CEIL_TILE, 0, 0);
       const ceil = new Mesh(ceilGeo, room.tone === 'plaster' ? mats.ceil : mats.wallCool);
       ceil.rotation.x = Math.PI / 2;
       ceil.position.set((room.floor.x0 + room.floor.x1) / 2, y1, (room.floor.z0 + room.floor.z1) / 2);
@@ -326,9 +433,10 @@ export function buildHouse(anisotropy: number): BuiltHouse {
     const cx = (r.x0 + r.x1) / 2;
     const cz = (r.z0 + r.z1) / 2;
     const floorGeo = track(slabPlane(w, d));
-    // World-anchored, unlike the room planes above: these two abut the model's own slab, and a tiling
-    // that restarts at each patch's centre would show the join as a seam in the stone.
-    anchorUv(floorGeo, w / FLOOR_TILE, d / FLOOR_TILE, r.x0 / FLOOR_TILE, r.z0 / FLOOR_TILE);
+    // World-anchored on the same grid as the room floors above, and for a second reason on top of
+    // theirs: these two abut the model's own slab, and a tiling that restarted at each patch's centre
+    // would show the join as a seam straight across the landing.
+    anchorUv(floorGeo, w / FLOOR_TILE_X, d / FLOOR_TILE_Z, r.x0 / FLOOR_TILE_X, -r.z1 / FLOOR_TILE_Z);
     const floor = new Mesh(floorGeo, mats.floorStone);
     floor.rotation.x = -Math.PI / 2;
     floor.position.set(cx, UPPER_PATCH.floorY, cz);
@@ -336,7 +444,7 @@ export function buildHouse(anisotropy: number): BuiltHouse {
     group.add(floor);
 
     const ceilGeo = track(slabPlane(w, d));
-    anchorUv(ceilGeo, w / FLOOR_TILE, d / FLOOR_TILE, r.x0 / FLOOR_TILE, r.z0 / FLOOR_TILE);
+    anchorUv(ceilGeo, w / CEIL_TILE, d / CEIL_TILE, r.x0 / CEIL_TILE, r.z0 / CEIL_TILE);
     const ceil = new Mesh(ceilGeo, mats.wallCool);
     ceil.rotation.x = Math.PI / 2;
     ceil.position.set(cx, UPPER_PATCH.ceilY, cz);
@@ -352,6 +460,7 @@ export function buildHouse(anisotropy: number): BuiltHouse {
   );
 
   const dispose = (): void => {
+    disposed = true;
     group.removeFromParent();
     for (const d of disposables) d.dispose();
     disposables.length = 0;

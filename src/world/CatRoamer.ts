@@ -152,7 +152,7 @@ function shortest(a: number, b: number): number {
 
 /**
  * Put the cat in the house. Resolves nothing: the model arrives over the next few frames and until it
- * does the update is a no-op, exactly like the rest of the imported art. `shelfMoved` is read every
+ * does the update is a no-op, exactly like the rest of the imported art. `ritualOpen` is read every
  * frame rather than taken once — it is the one puzzle flag that changes where the cat may go, and it
  * only ever turns on, so the gated edge is added at the moment it does.
  */
@@ -162,7 +162,7 @@ export function installCat(
   scene: Scene,
   eye: Camera,
   aabbs: readonly AABB[],
-  shelfMoved: () => boolean,
+  ritualOpen: () => boolean,
   onError: (err: unknown, where: string) => void,
 ): CatRoamerHandles {
   const index = new Map<string, number>();
@@ -390,11 +390,11 @@ export function installCat(
   return {
     update: (dt) => {
       age += dt;
-      if (!opened && shelfMoved()) {
+      if (!opened && ritualOpen()) {
         opened = true;
         for (const pair of CAT_GATED) link(pair[0], pair[1]);
-        // Re-run the check once the shelf has moved. Its collider does not vanish, it slides 2.1 m
-        // north, so it stops blocking the ritual doorway and starts blocking whatever is behind it.
+        // Re-run the check once the screen is open. Its blocker does not slide out of the way, it drops
+        // below the world, so the doorway simply stops being blocked and nothing new starts being.
         checked = false;
         age = 0;
       }

@@ -197,50 +197,13 @@ export function makeCasing(mats: FixtureMats, s: CasingSpec): Group {
   return g;
 }
 
-export interface Hinged {
-  /** Add this to the scene. Rotating it swings the leaf. */
-  pivot: Group;
-  /** Radians the leaf turns when open. */
-  openAngle: number;
-}
-
-/**
- * A door leaf hinged on one side of an opening, with a brass handle.
- *
- * Deliberately collider-free. A swinging AABB is how the feasibility scene once sealed its own
- * doorway, and a door the player has opened does not need to block anything; a closed one is
- * held shut by the game refusing to let you through, not by geometry.
+/*
+ * makeDoorLeaf() and its Hinged return stood here. Every doorway in the house that has a leaf now hangs
+ * an imported one — door-inner.glb in the bedroom, the living room and the flat's partition, door.glb
+ * minus its frame at the cellar and basement — so the last caller went with HouseScene's doorLeaves
+ * array. makeCasing above is untouched: an imported leaf is a leaf, and the frame around every one of
+ * them is still built here.
  */
-export function makeDoorLeaf(
-  mats: FixtureMats,
-  s: CasingSpec,
-  hingeSide: -1 | 1,
-  openAngle: number,
-): Hinged {
-  const w = s.half * 2 - 0.19;
-  const h = s.y1 - s.y0 - 0.14;
-  const pivot = new Group();
-  const along = s.half - 0.095;
-  pivot.position.set(
-    s.axis === 'x' ? s.x + hingeSide * along : s.x,
-    s.y0,
-    s.axis === 'x' ? s.z : s.z + hingeSide * along,
-  );
-  if (s.axis === 'z') pivot.rotation.y = Math.PI / 2;
-
-  const leaf = boxMesh(mats.door, w, h, 0.055, (-hingeSide * w) / 2, h / 2, 0);
-  pivot.add(leaf);
-  const knob = new Mesh(new CylinderGeometry(0.035, 0.035, 0.085, 8), mats.brass);
-  knob.rotation.x = Math.PI / 2;
-  knob.position.set(-hingeSide * (w - 0.13), 0.98, 0.07);
-  pivot.add(knob);
-  for (const hy of [0.4, h - 0.4]) {
-    pivot.add(boxMesh(mats.brass, 0.05, 0.12, 0.03, -hingeSide * 0.03, hy, 0.05));
-  }
-  // The pivot is what moves; every child is rigidly attached to it, so one mesh per material is safe.
-  mergeStaticChildren(pivot);
-  return { pivot, openAngle: openAngle * -hingeSide };
-}
 
 export interface BuiltGate {
   group: Group;
@@ -542,58 +505,6 @@ export function makeBreakerPanel(
     anchor: new Vector3(x, y, z + 0.1),
     keyAnchor: new Vector3(x + 0.95, y - 0.34, z + 0.12),
     aabbs: [],
-  };
-}
-
-export interface BuiltShelf {
-  group: Group;
-  /**
-   * The shelf's collider. Returned so the scene can push the same object into the controller's
-   * list and then *mutate it in place* when the shelf slides — the controller holds the array by
-   * reference, so moving the box is enough and there is no re-register step to forget.
-   */
-  aabb: AABB;
-  anchor: Vector3;
-}
-
-/**
- * The shelf hiding the ritual room's doorway, standing flat against the basement's west wall.
- *
- * It is a normal shelf with normal things on it. Nothing marks it, because §8 rules out marking
- * it; what gives it away is the wall — the basement's west side is a metre short of where the
- * room's own dimensions say it should end, and this is the only furniture standing against it.
- */
-export function makeShelf(mats: FixtureMats, x: number, z: number, floorY: number): BuiltShelf {
-  const group = new Group();
-  const H = 1.95;
-  const D = 1.9;
-  // Back panel on the -x side: the shelf stands against a west wall and opens into the room.
-  group.add(boxMesh(mats.wood, 0.06, H, D, x - 0.31, floorY + H / 2, z));
-  for (const dz of [-D / 2 + 0.03, D / 2 - 0.03]) {
-    group.add(boxMesh(mats.wood, 0.62, H, 0.06, x, floorY + H / 2, z + dz));
-  }
-  for (const sy of [0.42, 0.86, 1.3, 1.74]) {
-    group.add(boxMesh(mats.wood, 0.6, 0.04, D - 0.1, x, floorY + sy, z));
-  }
-  // Jars and tins. Dressing, but it is what makes the shelf furniture instead of a door.
-  let seed = 0;
-  for (const sy of [0.42, 0.86, 1.3]) {
-    for (let i = 0; i < 5; i++) {
-      seed = (seed * 31 + 7) % 97;
-      const jz = z - D / 2 + 0.24 + i * 0.35;
-      const jh = 0.12 + (seed % 5) * 0.026;
-      const jar = new Mesh(new CylinderGeometry(0.045, 0.045, jh, 7), seed % 2 ? mats.paper : mats.dark);
-      jar.position.set(x + 0.02 + ((seed % 3) - 1) * 0.05, floorY + sy + 0.02 + jh / 2, jz);
-      group.add(jar);
-    }
-  }
-
-  // The scene slides the whole group aside; no child has independent motion.
-  mergeStaticChildren(group);
-  return {
-    group,
-    aabb: aabbOf(x, floorY, z, 0.34, D / 2, floorY + H),
-    anchor: new Vector3(x + 0.34, floorY + 1.1, z),
   };
 }
 

@@ -24,7 +24,7 @@
  * footprint. Nobody can tell from inside, because every route between levels is an enclosed stair.
  */
 
-import { BASE_CEIL_H, BASE_Y, HALF_T, WALL_H, type FloorRect, type RoomSpec } from './HouseLayout';
+import { BASE_CEIL_H, BASE_Y, HALF_T, WALL_H, type FloorRect, type RoomSpec, type WallRun } from './HouseLayout';
 
 // --- Ground floor ---
 export const HALL = { x0: -5, x1: 5, z0: -7, z1: 0 };
@@ -44,6 +44,15 @@ export const LIVING = { x0: -1, x1: 9, z0: 2.6, z1: 10.2 };
 export const GATE = { x: 0, z: -7, half: 0.8, top: 2.45 };
 /** Archway from hall into hallway. */
 export const ARCH = { x: 0, half: 1.6, top: 2.4 };
+
+/** Main Hall boundaries shared with the fitted damaged-wall panels in ModelProps. */
+export const HALL_WALLS = {
+  south: { x1: HALL.x0, z1: HALL.z0, x2: HALL.x1, z2: HALL.z0, openings: [{ at: GATE.x, half: GATE.half, y1: GATE.top }], modelCollision: true },
+  west: { x1: HALL.x0, z1: HALL.z0, x2: HALL.x0, z2: HALL.z1, modelCollision: true },
+  east: { x1: HALL.x1, z1: HALL.z0, x2: HALL.x1, z2: HALL.z1, modelCollision: true },
+  north: { x1: HALL.x0, z1: HALLWAY.z0, x2: HALL.x1, z2: HALLWAY.z0, openings: [{ at: ARCH.x, half: ARCH.half, y1: ARCH.top }], modelCollision: true },
+} satisfies Record<'south' | 'west' | 'east' | 'north', WallRun>;
+
 export const BEDROOM_DOOR = { x: -5, z: 2.6, half: 0.8, top: 2.1 };
 export const LIVING_DOOR = { x: 5, z: 2.6, half: 0.8, top: 2.1 };
 export const CELLAR_DOOR = { x: -9, z: 1.3, half: 0.8, top: 2.1 };
@@ -194,14 +203,19 @@ export const UPPER_PATCH = {
 };
 
 /**
- * Where the player wakes: on the north-west bedroom's imported bed, near its foot and clear of the
- * curled cat. The y here is the measured mattress (0.47 m) plus the standing eye height; HouseScene
- * replaces it with the model's exact fitted value as soon as bed.glb lands.
+ * Where the player wakes: on the bedroom's imported bed, near its foot and clear of the curled cat. The
+ * y here is the measured mattress (0.47 m) plus the standing eye height; HouseScene replaces it with the
+ * model's exact fitted value as soon as bed.glb lands.
  *
- * yaw -0.45 faces diagonally toward the bedroom door rather than into the west wall or straight at the
+ * x follows that bed. It stood against the west wall at -8.26 while HouseProps also built a procedural
+ * bed in the middle of the room; the procedural one is gone and the imported one took its place, so the
+ * spawn is now the middle of the floor. z stays at 8.05 — 0.95 m south of the bed's centre, which is its
+ * foot end on a 2.1 m mattress — and so does everything tuned against it.
+ *
+ * yaw -0.45 faces diagonally toward the bedroom door rather than into a wall or straight at the
  * headboard, so the first frame immediately shows a way out of the room.
  */
-export const SPAWN = { x: -8.26, y: 2.17, z: 8.05, yaw: -0.45 };
+export const SPAWN = { x: -6.2, y: 2.17, z: 8.05, yaw: -0.45 };
 
 // --- Stairs ---
 /** Top landing, flat, just outside the cellar door. */
@@ -287,18 +301,7 @@ export const ROOMS: RoomSpec[] = [
     floor: HALL,
     ceiling: true,
     tone: 'plaster',
-    walls: [
-      // South wall carries the gate. The gate leaf itself is a prop; this is the surround.
-      {
-        x1: HALL.x0,
-        z1: HALL.z0,
-        x2: HALL.x1,
-        z2: HALL.z0,
-        openings: [{ at: GATE.x, half: GATE.half, y1: GATE.top }],
-      },
-      { x1: HALL.x0, z1: HALL.z0, x2: HALL.x0, z2: HALL.z1 },
-      { x1: HALL.x1, z1: HALL.z0, x2: HALL.x1, z2: HALL.z1 },
-    ],
+    walls: [HALL_WALLS.south, HALL_WALLS.west, HALL_WALLS.east],
   },
   {
     id: 'hallway',
@@ -309,14 +312,10 @@ export const ROOMS: RoomSpec[] = [
     ceiling: true,
     tone: 'plaster',
     walls: [
-      // Owns the wall it shares with the hall, so the archway is only built once.
-      {
-        x1: HALLWAY.x0,
-        z1: HALLWAY.z0,
-        x2: HALLWAY.x1,
-        z2: HALLWAY.z0,
-        openings: [{ at: ARCH.x, half: ARCH.half, y1: ARCH.top }],
-      },
+      // Owns the shared wall. Only its Main Hall-wide centre uses imported model collision.
+      { x1: HALLWAY.x0, z1: HALLWAY.z0, x2: HALL.x0, z2: HALLWAY.z0 },
+      HALL_WALLS.north,
+      { x1: HALL.x1, z1: HALLWAY.z0, x2: HALLWAY.x1, z2: HALLWAY.z0 },
       {
         x1: HALLWAY.x0,
         z1: HALLWAY.z1,

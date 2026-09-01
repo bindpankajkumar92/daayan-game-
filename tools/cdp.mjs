@@ -11,6 +11,10 @@
  * `CDP_PORT` overrides the port. Worth knowing about before debugging why the forward will not bind:
  * a headless Chrome left over from an earlier session holds 9222 for as long as it lives, and
  * `adb forward` then fails with `cannot bind to 127.0.0.1:9222` rather than anything about Chrome.
+ *
+ * `CDP_MATCH` picks the target by substring of its URL or title instead of taking the first one. Only
+ * the WebView ever has a single page; device Chrome reports every open tab, so measuring there without
+ * this is a bet on tab order — and a losing one, since the phone restores dozens.
  */
 
 import { readFileSync } from 'node:fs';
@@ -25,10 +29,16 @@ if (!expression) {
 }
 
 const PORT = process.env.CDP_PORT ?? '9222';
+const MATCH = process.env.CDP_MATCH ?? '';
 const list = await (await fetch(`http://127.0.0.1:${PORT}/json`)).json();
-const page = list.find((t) => t.type === 'page' && t.webSocketDebuggerUrl);
+const pages = list.filter((t) => t.type === 'page' && t.webSocketDebuggerUrl);
+const page = MATCH ? pages.find((t) => `${t.url} ${t.title}`.includes(MATCH)) : pages[0];
 if (!page) {
-  console.error('no inspectable page — is the app in the foreground?');
+  console.error(
+    MATCH
+      ? `no inspectable page matching ${JSON.stringify(MATCH)} — ${pages.length} page target(s) open`
+      : 'no inspectable page — is the app in the foreground?',
+  );
   process.exit(1);
 }
 
