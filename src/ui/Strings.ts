@@ -70,7 +70,7 @@ const HINGLISH = new Map<string, string>([
   ['Three turns. The gate gives.', 'Teen baar ghumao. Gate khul jayega.'],
   ['The last bolt draws back.', 'Aakhri chatakni khul gayi.'],
   ['The candles go out.', 'Mombattiyan bujh gayin.'],
-  ['The front of the plinth drops open.', 'Chabutre ka aage wala hissa khul gaya.'],
+  ['The lid of the coffin swings open.', 'Kafan ka dhakkan khul gaya.'],
   ['The lid comes up.', 'Dhakkan uth gaya.'],
   ['A bolt shifts, further along the wall.', 'Deewar ke aage kahin ek chatakni sarki.'],
   ['Cold air. There is a doorway behind it.', 'Thandi hawa. Peeche ek darwaza hai.'],

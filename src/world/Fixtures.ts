@@ -294,9 +294,7 @@ export interface BuiltAltar {
   symbolAnchors: Vector3[];
   /** Candle flames beside each symbol. Hidden until that symbol is activated. */
   flames: Mesh[];
-  /** Slides down into the plinth when the sequence is solved. */
-  lid: Group;
-  /** Key 1, revealed inside the compartment. */
+  /** Key 1, revealed inside the opened coffin. */
   key: Group;
   keyAnchor: Vector3;
   aabbs: AABB[];
@@ -317,12 +315,23 @@ export function makeKey(mats: FixtureMats): Group {
 }
 
 /**
- * The ritual altar: a stone plinth, four symbols standing on it, a candle beside each, and a
- * compartment in the front face that drops open when the sequence is right.
+ * The ritual altar's dressing: four symbols on stone stubs on the floor, a candle beside each, and the
+ * key that waits inside the coffin beside them.
+ *
+ * The coffin itself is coffin.glb — placed by ModelProps and opened by Coffin.ts, which drives the
+ * file's own lid clip. What is *not* the coffin is any of this. The old plinth had a drop-front that
+ * fell open and presented the key on it; the animated coffin's lid hinges on a vertical axis and
+ * swings ~173° sideways off the west end, so nothing can rest on it and there is no front to drop.
+ * The symbols therefore stand to the coffin's *east* — the side the player enters from, and the one
+ * side the westward swing never reaches — and the key is revealed *inside* the opened coffin, where
+ * the swing exposes it.
+ *
+ * They stood on a ledge until the player asked for it gone; that they stand east of the coffin is the
+ * part of the arrangement the lid's swing dictates and the part that did not change with it.
  *
  * The symbols are given in *display* order, left to right as the player sees them. The solution
- * order is deliberately not this order and lives with the puzzle, so the arrangement on the
- * altar gives nothing away and the written clue in the room is the only route in.
+ * order is deliberately not this order and lives with the puzzle, so the arrangement on the floor
+ * gives nothing away and the written clue in the room is the only route in.
  */
 export function makeAltar(
   mats: FixtureMats,
@@ -332,9 +341,29 @@ export function makeAltar(
   kinds: SymbolKind[],
 ): BuiltAltar {
   const group = new Group();
-  const TOP = floorY + 0.95;
-  group.add(boxMesh(mats.dark, 0.9, 0.86, 2.4, x, floorY + 0.43, z));
-  group.add(boxMesh(mats.iron, 1.02, 0.09, 2.52, x, TOP - 0.045, z));
+  /*
+   * The ledge is gone — the player asked for the coffin to stand alone in its circle, and the 0.42 x 2.4
+   * slab with an iron top that stood beside it was the thing they pointed at. What is left is the four
+   * symbols, each on its own stone stub on the floor, on the same line the ledge held them on: LX is that
+   * ledge's centre, so every offset below and the chalk ring HouseProps draws around all of this still
+   * land where they were authored. The coffin body is 1.10 m wide and lies along z, so its east face is
+   * at x + 0.55 and the stubs stand 0.40 m clear of it.
+   *
+   * East is not a choice the ledge leaving reopens. See Coffin: the lid hinges on a vertical axis and
+   * sweeps ~173 deg *west*, so anything standing on the lid — or west of the body — is in its path. East
+   * is the safe side and the side the player walks in on.
+   */
+  const LX = x + 0.95;
+  /*
+   * Stub height, and it is a reachability number rather than a styling one. Each symbol's prompt sits on
+   * top of its stub with a reach of 1.9 m measured from the eye at 1.7: laid on the bare floor a symbol
+   * is already 1.58 m from a player standing over it, 0.32 m of slack in a check that flags anything
+   * under 0.35 as tight, and that is before the player has to stand anywhere in particular. 0.3 m of
+   * stub buys the slack back and keeps four small carvings told apart at a glance, which was the other
+   * half of what the ledge and its pedestals were doing.
+   */
+  const STUB = 0.3;
+  const TOP = floorY + STUB;
 
   const symbolAnchors: Vector3[] = [];
   const flames: Mesh[] = [];
@@ -343,54 +372,51 @@ export function makeAltar(
     const oz = z + (offsets[i] ?? 0);
     const kind = kinds[i];
     if (!kind) continue;
-    // Short pedestal so each symbol sits clear of the slab and can be told apart at a glance.
-    group.add(boxMesh(mats.dark, 0.14, 0.11, 0.14, x - 0.06, TOP + 0.055, oz));
+    // The stub, standing on the floor where a pedestal on a ledge used to stand on a ledge.
+    group.add(boxMesh(mats.dark, 0.18, STUB, 0.18, LX, floorY + STUB / 2, oz));
     const sym = makeSymbol(kind, mats);
-    sym.position.set(x - 0.06, TOP + 0.22, oz);
-    sym.rotation.y = Math.PI / 2;
+    sym.position.set(LX, TOP + 0.12, oz);
+    sym.rotation.y = -Math.PI / 2;
     group.add(sym);
-    symbolAnchors.push(new Vector3(x - 0.06, TOP + 0.22, oz));
+    symbolAnchors.push(new Vector3(LX, TOP + 0.12, oz));
 
+    // Candles on the floor beside their stubs. 0.24 m east clears the 18 cm stub by 12 cm and leaves
+    // the flame where the player's eye already is when the symbol beside it is the thing under the
+    // prompt, so lighting one still reads as this symbol's candle rather than as the next one's.
     const candle = new Mesh(new CylinderGeometry(0.024, 0.028, 0.13, 6), mats.paper);
-    candle.position.set(x + 0.26, TOP + 0.065, oz);
+    candle.position.set(LX + 0.24, floorY + 0.065, oz);
     group.add(candle);
     const flame = new Mesh(new CylinderGeometry(0.001, 0.016, 0.06, 5), mats.glow);
-    flame.position.set(x + 0.26, TOP + 0.16, oz);
+    flame.position.set(LX + 0.24, floorY + 0.16, oz);
     flame.visible = false;
     group.add(flame);
     flames.push(flame);
   }
 
-  // Compartment: a drop-front in the plinth's face, hinged along its bottom edge, so `lid` sits on
-  // the hinge and the panel hangs above it. Rotating -PI/2 about z lays it out flat like a bureau
-  // front, and the key is placed where that flat surface ends up.
-  //
-  // The plinth is solid, so the key cannot sit *inside* it — and it should not. A key lying in a
-  // shadowed hole, with nothing glowing on it (§8), is a key nobody finds on a phone screen. The
-  // front drops open and presents it.
-  const lid = new Group();
-  lid.position.set(x + 0.455, floorY + 0.28, z);
-  lid.add(boxMesh(mats.iron, 0.05, 0.44, 0.92, 0, 0.22, 0));
-  lid.add(boxMesh(mats.brass, 0.03, 0.04, 0.12, 0.04, 0.22, 0));
-  group.add(lid);
-
+  // The key waits inside the coffin, laid on its floor at the body's centre. It is invisible until
+  // the sequence is solved and the lid swings off; then it lies in the open shell, facing up at the
+  // player who is standing east of it. A key lying in a shadowed hole with nothing glowing on it (§8)
+  // is a key nobody finds on a phone screen — so it is presented by the opening, not hidden by it.
   const key = makeKey(mats);
-  key.position.set(x + 0.675, floorY + 0.31, z);
+  key.position.set(x, floorY + 0.3, z);
   key.rotation.x = Math.PI / 2;
   key.visible = false;
   group.add(key);
 
-  // Flames toggle individually, the compartment lid rotates, and the key is revealed later. Everything
-  // else is rigid altar dressing and may collapse to one draw per material.
-  mergeStaticChildren(group, [...flames, lid, key]);
+  // Flames toggle individually and the key is revealed later. Everything else is rigid dressing and
+  // may collapse to one draw per material.
+  mergeStaticChildren(group, [...flames, key]);
   return {
     group,
     symbolAnchors,
     flames,
-    lid,
     key,
-    keyAnchor: new Vector3(x + 0.675, floorY + 0.33, z),
-    aabbs: [aabbOf(x, floorY, z, 0.52, 1.28, TOP)],
+    keyAnchor: new Vector3(x, floorY + 0.32, z),
+    // Nothing here is collided any more. The ledge's box was the only entry, and four 18 cm stubs 0.3 m
+    // tall do not want one each: they stand inside the chalk ring the player has to walk into to reach
+    // them, so a collider there would push the player back out of their own reach. The coffin body still
+    // gets its own from the placement row.
+    aabbs: [],
   };
 }
 

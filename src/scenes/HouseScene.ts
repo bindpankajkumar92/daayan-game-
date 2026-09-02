@@ -70,6 +70,7 @@ import { armDaayan } from '@/world/DaayanKnife';
 import { armUpperDoor } from '@/world/UpperDoor';
 import { armInnerDoor } from '@/world/InnerDoor';
 import { armRitualDoors } from '@/world/RitualDoors';
+import { armRitualCoffin, type CoffinHandles } from '@/world/Coffin';
 import { hingeMainGate } from '@/world/MainGate';
 import { armNoiseProps, type NoisePropHandles } from '@/world/NoiseProps';
 import { armHiding } from '@/world/Hiding';
@@ -173,10 +174,12 @@ export function buildHouseScene(
    * it); it is a boot-time fallback, not a second permanent source of truth.
    */
   const spawnMattress: FloorRect = {
-    x0: SPAWN.x - 0.48,
-    x1: SPAWN.x + 0.48,
-    z0: SPAWN.z - 0.45,
-    z1: SPAWN.z + 1.45,
+    // The bed lies length-along-x against the west wall (ModelProps' bed row), and SPAWN sits 0.25 m in
+    // from its foot edge on the centre line, so these offsets are that footprint: 2.1 m on x, 1.0 on z.
+    x0: SPAWN.x - 1.85,
+    x1: SPAWN.x + 0.25,
+    z0: SPAWN.z - 0.5,
+    z1: SPAWN.z + 0.5,
     y: SPAWN.y - 1.7,
   };
   floors.push(spawnMattress);
@@ -368,6 +371,12 @@ export function buildHouseScene(
   // --- Puzzle 1: the order of waking ---
   // Symbols stand in display order; the answer is a different order and lives in Clues. Touching
   // out of turn puts every candle out and starts again — no lockout, nothing lost but the taps.
+  /**
+   * The coffin's lid, armed by the placement hook below and released by the solve. Null until the
+   * model lands — and if its clip did not arrive, null forever, which is survivable: the key still
+   * appears, only without the ceremony.
+   */
+  let coffinLid: CoffinHandles | null = null;
   const altar = makeAltar(fx, PLACE.altar.x, PLACE.altar.z, BASE_Y, ALTAR_DISPLAY);
   fixtures.add(altar.group);
   aabbs.push(...altar.aabbs);
@@ -392,12 +401,11 @@ export function buildHouseScene(
         }
         if (seq.length < RITUAL_ORDER.length) return;
         if (!state.solve('ritual')) return;
-        // Bottom-hinged: the front falls outward and lies flat, with the key on it.
-        tween(1.1, (k) => {
-          altar.lid.rotation.z = -k * (Math.PI / 2);
-        });
-        placeKey('altar.key', altar.key, altar.keyAnchor, KEY_OF.ritual, 'An iron key, in the plinth.');
-        hud.showToast('The front of the plinth drops open.', 3.4);
+        // The coffin's lid swings open on its own eased clip — started by the placement hook's `open`
+        // and ticked by the frame loop. The key is revealed inside the opened shell.
+        coffinLid?.open();
+        placeKey('altar.key', altar.key, altar.keyAnchor, KEY_OF.ritual, 'An iron key, in the coffin.');
+        hud.showToast('The lid of the coffin swings open.', 3.4);
       },
     });
   });
@@ -645,6 +653,12 @@ export function buildHouseScene(
         },
       });
     }
+    if (name === 'coffin-ritual') {
+      // The second placement that wants the file's clips: the lid's swing is a baked ease the scene
+      // must not re-ease, so Coffin builds its own mixer, holds it shut, and hands back the tick the
+      // frame loop calls and the release the puzzle's solve fires.
+      coffinLid = armRitualCoffin(root, clips, reportError);
+    }
     if (name === 'gate-main.glb') {
       swingGate = hingeMainGate(root);
       // Worth reporting rather than swallowing: the blocker still drops, so the player could still
@@ -700,6 +714,9 @@ export function buildHouseScene(
     // The ritual screen, once. It is paused until the player uses it and re-paused by the clip's own
     // clampWhenFinished, so outside those 1.3 seconds this call costs a null check and a timeScale of 0.
     slideScreen?.(dt);
+    // The coffin's lid, for the same reason and with the same cost: parked shut until the sequence is
+    // solved, then one 1.2 s swing, then clamped open.
+    coffinLid?.tick(dt);
 
     // Tweens run backwards so a finished one can be spliced out mid-loop.
     for (let i = tweens.length - 1; i >= 0; i--) {

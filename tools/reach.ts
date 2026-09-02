@@ -6,8 +6,22 @@
  * reports the closest standable point to every prompt anchor in the house. Anything whose closest
  * standable point is further away than its own reach can never be used, which is a bug that
  * otherwise costs a full manual lap of the house per room to find.
+ *
+ * This file is NOT in tsconfig's `include`, so `npm run typecheck` never looks at it and it can rot
+ * silently — it had, twice over, against a `makeShelf` and a `PLACE.shelf` that no longer exist and a
+ * `makeGate` that lost two parameters. Run it after moving anything a prompt hangs off:
+ *
+ *     npx tsx tools/reach.ts
+ *
+ * Two things it deliberately does not model, and both make it pessimistic rather than optimistic:
+ * imported-model colliders (ModelProps pushes those at load time, so a sample here may be inside a
+ * table that exists at runtime), and wall facings (WALL_INSET stands in for the wall, and a facing only
+ * ever moves the wall 6 cm further into the room). A pass here is necessary, not sufficient; a fail is
+ * real.
  */
 
+// First, and it has to be: it installs the `document` stub the world modules' textures reach for.
+import './dom-shim';
 import { MeshLambertMaterial, Vector3 } from 'three';
 import { PLACE, buildProps } from '@/world/HouseProps';
 import { BASE_Y } from '@/world/HouseLayout';
@@ -19,7 +33,6 @@ import {
   makeCodeBox,
   makeFixtureMats,
   makeGate,
-  makeShelf,
 } from '@/world/Fixtures';
 import { ALTAR_DISPLAY, CLUES } from '@/game/Clues';
 import type { AABB } from '@/player/FPController';
@@ -36,10 +49,12 @@ const props = buildProps(mats);
 const altar = makeAltar(mats, PLACE.altar.x, PLACE.altar.z, BASE_Y, ALTAR_DISPLAY);
 const box = makeCodeBox(mats, PLACE.codeBox.x, PLACE.codeBox.y, PLACE.codeBox.z);
 const panel = makeBreakerPanel(mats, PLACE.breaker.x, PLACE.breaker.y, PLACE.breaker.z);
-const shelf = makeShelf(mats, PLACE.shelf.x, PLACE.shelf.z, BASE_Y);
-const gate = makeGate(mats, GATE.x, GATE.z, GATE.half, GATE.top);
+const gate = makeGate(mats, GATE.x, GATE.z);
 
-const aabbs: AABB[] = [...props.aabbs, ...altar.aabbs, ...box.aabbs, shelf.aabb];
+// makeShelf and its `basement.shelf` probe stood here. The procedural basement shelving is gone —
+// basement.glb brings its own — and with it went PLACE.shelf and the clue that sat on it. There is no
+// `basement.shelf` key in CLUES to check any more.
+const aabbs: AABB[] = [...props.aabbs, ...altar.aabbs, ...box.aabbs];
 
 interface Probe {
   id: string;
@@ -57,7 +72,6 @@ probes.push({ id: 'box.dial', pos: box.anchor, reach: 1.7 });
 probes.push({ id: 'box.key', pos: box.keyAnchor, reach: 2.4 });
 probes.push({ id: 'panel.rockers', pos: panel.anchor, reach: 1.7 });
 probes.push({ id: 'panel.key', pos: panel.keyAnchor, reach: 2.4 });
-probes.push({ id: 'basement.shelf', pos: shelf.anchor, reach: 2.0 });
 gate.lockAnchors.forEach((p, i) => probes.push({ id: `gate.lock${i}`, pos: p, reach: 1.9 }));
 
 /** True if a collider overlaps the cylinder a player standing at (x, floorY, z) occupies. */

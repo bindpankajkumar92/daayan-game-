@@ -35,7 +35,7 @@ import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js
 import type { AABB, FloorRect } from '@/player/FPController';
 import { makeCeilingBoards, makePlaster, makeWoodFloor, makeWoodPanel } from './ProcTextures';
 import { expandRun, segmentBox, type Box, type Segment } from './HouseLayout';
-import { ROOMS, UPPER_PATCH, houseFloors, stairTreads } from './HouseRooms';
+import { ROOMS, UPPER_PATCH, houseFloors } from './HouseRooms';
 
 /** World size one texture repeat covers. Wall plaster at 2.4 m ≈ 210 px/m from a 512 px map. */
 const WALL_TILE = 2.4;
@@ -452,12 +452,9 @@ export function buildHouse(anisotropy: number): BuiltHouse {
     group.add(ceil);
   }
 
-  // player walks down them instead of into them.
-  addMerged(
-    stairTreads().map((b) => worldBox(b, TRIM_TILE)),
-    mats.trim,
-    'stair-treads',
-  );
+  // The cellar shaft's visible stair is stair-wood.glb (see the `stair-cellar.glb` row in ModelProps),
+  // so the procedural stairTreads() boxes are no longer drawn. stairFloors() stays — the player still
+  // walks fifteen 0.2 m steps, because the model's own 0.75 m rise is more than the controller's step-up.
 
   const dispose = (): void => {
     disposed = true;

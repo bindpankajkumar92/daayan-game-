@@ -33,25 +33,21 @@
  *
  * Known limit, worth knowing before hunting it as a bug: the quad sits SHADOW_LIFT above the floor it
  * belongs to, so a shadow that falls on something thin lying *on* that floor is behind it and does not
- * draw. The house has five such things — four cloths whose tops are 21 mm up (the hall and hallway
- * runners, the bedroom and living-room rugs) and the scuff ring at 13 mm — and three places where it
- * bites:
+ * draw. This used to bite in three places and now bites in none, because the three things it bit on were
+ * the hall and hallway runners and the living-room rug — all 21 mm tall, all removed on request. What is
+ * left on a floor anywhere in this house is the hall's scuff ring at 13 mm, which is 1 mm under the lift
+ * and nothing stands on it.
  *
- *   - cat.glb sits on the hallway runner, and is seated at the runner's top rather than at y 0 so that
- *     its shadow clears the cloth. That was a placement bug either way; see the row.
- *   - table.glb straddles the living-room rug's east edge, where no single height works. It has no
- *     shadow, and the rug grounds that half of it instead.
- *   - the armchair stands wholly on the living-room rug, so its procedural shadow is clipped away
- *     entirely; three more (the ledger table, the procedural bed, the hallway crate) lose a corner
- *     where their quad laps a rug's edge. Left as is: a chair on a rug is already sitting on a visible
- *     surface, which is most of what a shadow buys, and a soft gradient losing its outermost corner is
- *     not something anyone can see.
+ * The removals are recorded here rather than deleted because two rows were tuned around them and the
+ * tuning had to be undone: cat.glb was seated at y 0.021, the runner's top, and is back at y 0; table.glb
+ * carried no `shadow` because it straddled the rug's east edge where no single height worked, and now
+ * carries `shadow: 1`. If cloth is ever laid on a floor again, both of those come back with it.
  *
- * Raising SHADOW_LIFT past 21 mm would trade all three for a worse one — the lift is also the parallax
- * between a shadow and the floor it is on, and at 26 mm it exceeds the 17 mm of visible shadow ring
- * around bottle-beer.glb's 7 cm base, i.e. the bottle would come away from its own shadow. The real fix
- * is a per-shadow height, which means knowing what each prop stands on, which is a raycast per prop
- * against geometry that is already merged.
+ * Raising SHADOW_LIFT is still not the fix it looks like — the lift is also the parallax between a shadow
+ * and the floor it is on, and at 26 mm it exceeds the 17 mm of visible shadow ring around bottle-beer.glb's
+ * 7 cm base, i.e. the bottle would come away from its own shadow. The real fix is a per-shadow height,
+ * which means knowing what each prop stands on, which is a raycast per prop against geometry that is
+ * already merged.
  */
 
 import {

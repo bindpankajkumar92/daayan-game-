@@ -2,10 +2,17 @@
  * HouseProps — the furniture and dressing, and the surfaces the clues lie on.
  *
  * Two jobs, and they are the same job. The brief (§8) forbids glowing puzzle objects and quest
- * markers, which means a readable note has to be findable *because of where it is* — weighted
- * under a cup on the dining table, pinned beside the gate, nailed up next to the panel it
+ * markers, which means a readable note has to be findable *because of where it is* — left open on
+ * the one table in the room, pinned beside the gate, nailed up next to the panel it
  * describes. So the furniture is not decoration that happens to be near the clues; the furniture
  * is what makes the clues discoverable at all, and the two get built together here.
+ *
+ * That cuts both ways, and the living room is where it showed. Several rounds of "remove this" have
+ * taken the fireplace, the ledger table, the dining table, the chair and the rugs out of this file, and
+ * each removal was also the removal of a clue's reason for being where it was. None of the three living
+ * room clues was dropped with its furniture: they were re-homed onto what is left — the east wall, the
+ * imported side table, the north wall beside the window — and the arithmetic for each new spot is in the
+ * comments at the site, because a note pinned 1 cm inside a wall facing is a note nobody can read.
  *
  * Everything in this file is static and merged by material. Anything that moves is built by
  * Fixtures instead. Positions that both this file and the scene need — the dressing table and the
@@ -23,8 +30,19 @@ import type { AABB } from '@/player/FPController';
 export const PLACE = {
   /** Bedroom strongbox — rests on the dressing table top, front face toward +z. */
   codeBox: { x: -7.4, y: 0.76, z: 3.0 },
-  /** Stopped clock, on the wall directly above the box. */
-  clock: { x: -7.4, y: 1.92, z: 2.72 },
+  /**
+   * Stopped clock, on the wall directly above the box.
+   *
+   * z 2.78, not the 2.72 it was hung at, and for the same reason `breaker` below sits 6 cm off its
+   * wall: that south wall now wears a damaged-wall facing whose front is 6 cm proud of the plaster,
+   * at z 2.76. `makeClock` builds a 0.06-deep case centred on this z, so at 2.72 the case spanned
+   * 2.69..2.75 — entirely inside the facing — and the only parts of the clock left visible were the
+   * hands at 2.766 and the hub, four thin bars and a brass dot floating on broken masonry with no
+   * dial behind them. Moving it forward by exactly the facing's protrusion puts the case front at
+   * 2.81 and restores the 5 cm of relief it was authored with. The clue anchor below is derived from
+   * this z, so it follows.
+   */
+  clock: { x: -7.4, y: 1.92, z: 2.78 },
   /**
    * Basement breaker panel on the south wall; its hatch sits 0.95 m to the +x side.
    *
@@ -98,21 +116,54 @@ type Ctx = { b: Batch; m: FixtureMats; aabbs: AABB[]; at: Record<string, Vector3
  * at eye height on the way in.
  */
 function hall({ b, m, aabbs, at }: Ctx): void {
-  // Runner, and boot scuffs worn into the boards in front of the gate. Eleven people walked in.
-  b.box(m.cloth, 2.0, 0.02, 3.6, 0, 0.011, -3.4);
+  // The runner that lay here is gone with the other two — see living() for the one note covering all
+  // three. What stays is the boot scuffs worn into the boards in front of the gate: not cloth, and the
+  // only thing in this room that says eleven people walked in.
   b.ring(m.dark, 0.9, 1.35, 14, 0, 0.013, -6.0, Math.PI * 0.15, Math.PI * 0.7);
 
-  // The pinned notice, beside the gate at the height of a face.
-  sheet(b, m, 1.9, 1.45, -6.86, 0.3, 0.4, 'z');
-  b.box(m.iron, 0.02, 0.02, 0.02, 1.9, 1.62, -6.83);
+  /*
+   * The pinned notice, beside the gate at the height of a face — and 4 cm further into the room than it
+   * was hung, because it was inside the wall.
+   *
+   * Every wall in this room wears a damaged-wall facing (HALL_WALL_PANELS, all four runs), and a facing's
+   * front stands 6 cm proud of the plaster it hides: the south wall is at z -7, so the panel is centred at
+   * -6.89 and its front face is at -6.84. `sheet` builds 8 mm of paper, so the old z of -6.86 spanned
+   * -6.864..-6.856 — the whole sheet behind the masonry, with only the pin's 2 cm cube at -6.83 poking out.
+   * A prompt that says there is a note here, an iron stud on bare stone, and no note. -6.82 spans
+   * -6.824..-6.816 and clears the facing by 1.6 cm; the pin follows to -6.80, keeping the same 6 mm
+   * standoff from the paper's face it always had. Both numbers mirror living.list against its own facing.
+   *
+   * The anchor does not move with them. It stands 0.26 m into the room at -6.6, and the south wall's
+   * standable band starts at -6.58, so the closest the player can stand is already effectively on it —
+   * shifting it 4 cm would change nothing a player can feel.
+   */
+  sheet(b, m, 1.9, 1.45, -6.82, 0.3, 0.4, 'z');
+  b.box(m.iron, 0.02, 0.02, 0.02, 1.9, 1.62, -6.8);
   at['hall.notice'] = new Vector3(1.9, 1.45, -6.6);
 
-  // Coat pegs, and one good coat still hanging. Nobody who owned it left.
-  b.box(m.wood, 0.05, 0.08, 1.3, 4.86, 1.85, -2.2);
+  /*
+   * Coat pegs, and one good coat still hanging. Nobody who owned it left.
+   *
+   * The rail is at x 4.81, not the 4.86 it was screwed to. Same facing arithmetic as the notice, on the
+   * east wall this time: HALL.x1 is 5, so the panel is centred at 4.89 and fronts at 4.84, and a 5 cm rail
+   * at 4.86 spanned 4.835..4.885 — 5 mm of a 1.3 m rail showing, and the coat apparently hung off the
+   * stone. 4.81 spans 4.785..4.835 and stands 5.5 cm clear.
+   *
+   * The pegs and the coat stay where they are. The pegs are 10 cm cylinders lying along x at 4.8, so they
+   * run 4.75..4.85: they pass through the rail as pegs do and bury 1 cm of butt end in the facing, which
+   * is inside both the rail and the wall. The coat hangs at 4.68..4.84 across y 0.805..1.755 and the rail
+   * occupies y 1.81..1.89, so the two never meet on the axis that would show.
+   */
+  b.box(m.wood, 0.05, 0.08, 1.3, 4.81, 1.85, -2.2);
   for (const pz of [-2.7, -2.35, -2.0, -1.65]) b.cyl(m.brass, 0.016, 0.016, 0.1, 5, 4.8, 1.82, pz, 'x');
   b.box(m.cloth, 0.16, 0.95, 0.42, 4.76, 1.28, -2.5);
 
-  frame(b, m, 4.87, 1.68, -3.6, 0.5, 0.62, 'x', -1);
+  // The photograph, moved off the plaster and onto the facing for the third time on this wall: 4.825 puts
+  // the 3 cm frame box's back exactly on the panel front at 4.84 and its print 4.1 cm proud of the stone,
+  // which is the construction living()'s four frames use against their own east facing at 8.825. At 4.87
+  // the wood spanned 4.855..4.885 and the print 4.844..4.856, both of them behind it. The anchor stays at
+  // 4.58, which is the innermost x the player can stand at anyway.
+  frame(b, m, 4.825, 1.68, -3.6, 0.5, 0.62, 'x', -1);
   at['hall.photo'] = new Vector3(4.58, 1.68, -3.6);
 
   table(b, m, -4.6, -3.0, 0.5, 1.3, 0.76, 0);
@@ -128,31 +179,30 @@ function hall({ b, m, aabbs, at }: Ctx): void {
 // --- Hallway ---------------------------------------------------------------------------------
 
 /** The corridor. Deliberately bare: it is a junction, and a junction with clues in it is a maze. */
-function hallway({ b, m, aabbs }: Ctx): void {
-  // Runner, down the length of the corridor. The corridor runs along x, so 15.6 is its x extent —
-  // as w and d it was 15.6 m of cloth laid *across* the house, through two walls and over the
-  // hall's own runner at the same height.
-  b.box(m.cloth, 15.6, 0.02, 1.1, 0, 0.011, 1.3);
-
-  b.box(m.wood, 1.6, 0.06, 0.36, 0, 0.44, 2.28);
-  for (const dx of [-0.72, 0.72]) {
-    for (const dz of [-0.13, 0.13]) b.box(m.wood, 0.07, 0.41, 0.07, dx, 0.215, 2.28 + dz);
-  }
-  aabbs.push(aabbOf(0, 0, 2.28, 0.82, 0.2, 0.47));
-
-  // Sconces, cold. They are here so the darkness reads as a failure rather than a style.
+function hallway({ b, m }: Ctx): void {
+  /*
+   * Barer than it was built, on request. Three things left this room: the runner down its length, the
+   * bench under the north wall at (0, 2.28), and the two crates stacked at the east end at (7.9, 2.15).
+   *
+   * All three were safe to take out, and it is worth writing down why, because it is not true of every
+   * room in this file. None of them published an anchor — hallway() is the one room function that never
+   * touched `at`, which is the "junction with clues in it is a maze" rule above, held to. None of them
+   * held a way shut: the crates were moved against the north wall precisely so they would stop being a
+   * thing the player had to squeeze past. And their two aabbs went out with their boxes, so shadows()
+   * drops the contact quads that were under them without being told — it reads that same list.
+   *
+   * What is left is the pair of cold sconces, which are the one piece of dressing here doing a job.
+   *
+   * z 2.40 and 2.36, not 2.46 and 2.42. This corridor's north wall is faced by three hand-written rows in
+   * ModelProps (hallway-wall-north-*) centred at z 2.49, so the visible surface is at 2.44 and the corridor
+   * is the side with smaller z. An 8 cm bracket at 2.46 spanned 2.42..2.50: 6 of its 8 cm inside the wall,
+   * showing a 2 cm iron nub with a candle cup apparently growing out of the masonry above it. 2.40 puts the
+   * bracket's back exactly on 2.44 and the cup keeps the 4 cm standoff it was drawn with.
+   */
   for (const sx of [-2.8, 2.8]) {
-    b.box(m.iron, 0.1, 0.16, 0.08, sx, 2.0, 2.46);
-    b.cyl(m.dark, 0.05, 0.03, 0.12, 6, sx, 2.14, 2.42);
+    b.box(m.iron, 0.1, 0.16, 0.08, sx, 2.0, 2.4);
+    b.cyl(m.dark, 0.05, 0.03, 0.12, 6, sx, 2.14, 2.36);
   }
-
-  // Crates at the far end, stacked by someone who did not expect to move them again. Against the
-  // north wall rather than mid-corridor: the east end wall is now the door to the upper stair, and
-  // in the middle of the floor these left a 0.66 m gap south of them and 0.30 m north, which is a
-  // door the player can see and not reach. 2.15 keeps the deeper crate 5 cm off the wall face.
-  b.box(m.wood, 0.6, 0.58, 0.6, 7.9, 0.29, 2.15);
-  b.box(m.wood, 0.52, 0.5, 0.52, 7.85, 0.83, 2.09, 0.3);
-  aabbs.push(aabbOf(7.88, 0, 2.13, 0.32, 0.32, 1.08));
 }
 
 // --- Bedroom ---------------------------------------------------------------------------------
@@ -172,6 +222,12 @@ function hallway({ b, m, aabbs }: Ctx): void {
  */
 function bedroom({ b, m, aabbs, at }: Ctx): void {
   const P = PLACE.codeBox;
+  // z 2.98 is against the plaster at 2.6, and stays there now that the wall wears a facing fronting at
+  // 2.76: the top spans 2.72..3.24, so its back 4 cm are inside the panel. Deliberate. A dressing table
+  // shoved into the wall reads as a dressing table against the wall, the overlap is behind the top where
+  // no eye line reaches, and the two legs at 2.79 and 3.17 both clear the facing. Pulling the table out
+  // to 3.04 to clear it would instead put a visible gap behind it and drag the box, the candle and the
+  // player's standing position with it, for nothing.
   table(b, m, P.x, 2.98, 1.5, 0.52, P.y, 0);
   aabbs.push(aabbOf(P.x, 0, 2.98, 0.76, 0.27, P.y));
   candle(b, m, P.x - 0.58, P.y + 0.01, 2.92, 0.11);
@@ -180,10 +236,10 @@ function bedroom({ b, m, aabbs, at }: Ctx): void {
   /*
    * The made bed and the wardrobe that stood here are both gone, and neither left a gap in the room.
    *
-   * The bed was six boxes at (-6.2, 8.3) and bed.glb now stands in its place — see ModelProps, where that
-   * row moved west off the wall to take this spot. Two beds a metre apart was the reason this one was
-   * procedural and that one was against the wall; with one bed there is no reason for either compromise,
-   * and the spawn mattress the player wakes on is now the middle of the room.
+   * The bed was six boxes at (-6.2, 8.3) and bed.glb now stands in its place — see ModelProps, whose row
+   * has since turned it length-along-x against the west wall. Two beds a metre apart was the reason this
+   * one was procedural and that one was against the wall; with one bed the procedural one is gone, and
+   * the spawn mattress the player wakes on is the imported bed's.
    *
    * The wardrobe was a 0.62 x 2.05 x 1.5 box with two doors at (-1.45, 6.6), against the east wall.
    * closet-old.glb is the wardrobe in this room now, at (-2.0, 9.75) — so the hiding pocket the box was
@@ -197,11 +253,26 @@ function bedroom({ b, m, aabbs, at }: Ctx): void {
   at['bedroom.diary'] = new Vector3(-4.74, 0.66, 9.24);
   aabbs.push(aabbOf(-4.7, 0, 9.3, 0.24, 0.24, 0.56));
 
-  // The window seat. A photograph left face down on the sill, which is a thing people do.
-  sheet(b, m, -8.82, 1.035, 6.0, 0.2, 0.26, 'flat', 0.1);
+  /*
+   * The window seat. A photograph left face down on the sill, which is a thing people do — and it is now
+   * actually on the sill rather than inside it.
+   *
+   * y 1.105, not 1.035. makeCasing draws a sill for any opening whose y0 is off the floor, and for this
+   * window (HouseScene's casings: x -9, half 0.8, y0 1.0, thickness WALL_T) that sill is a board spanning
+   * y 1.00..1.10 and x -9.21..-8.79. `sheet` builds 8 mm of paper, so 1.035 put the photograph at
+   * 1.031..1.039 — 6 cm *below* the sill's top face, inside the wood, with only the 3 cm that overhung the
+   * board's inner edge at -8.79 left showing as a floating paper lip. 1.105 lays it on the board with 1 mm
+   * of lift, which is enough to win the depth test without being visible at a grazing angle.
+   *
+   * x -8.95 rather than -8.82 for the same reason: at -8.82 a 0.2 m sheet skewed 0.1 rad reaches -8.7075,
+   * so a fifth of it hung off the sill into the room. -8.95 spans -9.0625..-8.8375 and sits wholly on the
+   * board. Nothing here meets a wall facing — the run at x -9 is faced, front at -8.84, but wallPanels
+   * omits the panel across an opening's width and this is inside the window's, so the sill and everything
+   * on it stand in a gap in the facing. The anchor stays at -8.72: it is 0.23 m in from the new centre and
+   * the player reads the photograph from the room side either way.
+   */
+  sheet(b, m, -8.95, 1.105, 6.0, 0.2, 0.26, 'flat', 0.1);
   at['bedroom.photo'] = new Vector3(-8.72, 1.1, 6.0);
-
-  b.box(m.cloth, 2.4, 0.02, 2.8, -5.0, 0.011, 6.2);
 
   // A chair pulled out and left at an angle, under the window.
   b.box(m.wood, 0.44, 0.05, 0.44, -8.1, 0.45, 5.4, 0.4);
@@ -217,51 +288,84 @@ function bedroom({ b, m, aabbs, at }: Ctx): void {
 /**
  * The living room. The brief asks this one to "primarily build curiosity", so nothing here is a
  * puzzle and nothing here is a key — it is three documents that each say something is wrong with
- * the arithmetic of this house, and a fireplace to read them by.
+ * the arithmetic of this house.
+ *
+ * Every piece of furniture those three documents used to lie on has now been taken out at the player's
+ * request: the fireplace and its mantelpiece, the little table the ledger was open on, the dining table
+ * with its one chair, and the rug. The documents are the room, so they did not go with it — each one
+ * moved to the nearest surface that survived, and the three moves are the substance of this function:
+ *
+ * - the four photographs come off the mantel shelf and hang on the east wall, which is what a house
+ *   does with photographs when there is no shelf;
+ * - the ledger moves onto table.glb, the imported side table in ModelProps that is now the only
+ *   horizontal surface left in the room;
+ * - the shopping list is pinned to the north wall beside the window instead of being weighted down with
+ *   a cup on a table that no longer exists.
+ *
+ * Clues.ts's `sub` lines for all three were reworded to match, because those strings are read to the
+ * player as where the thing was found and a stale one is a lie about the room they are standing in.
  */
-function living({ b, m, aabbs, at }: Ctx): void {
-  // Fireplace and mantelpiece. The four photographs stand on the shelf in their four frames.
-  b.box(m.wood, 0.36, 1.15, 2.1, 8.72, 0.575, 6.0);
-  b.box(m.dark, 0.3, 0.72, 1.12, 8.8, 0.42, 6.0);
-  b.box(m.wood, 0.46, 0.07, 2.24, 8.67, 1.185, 6.0);
+function living({ b, m, at }: Ctx): void {
+  /*
+   * The four photographs, off the shelf and onto the east wall.
+   *
+   * x 8.825 is a facing measurement, not a wall measurement. LIVING.x1 is 9 and the plaster's inner face
+   * is 8.9, but this wall wears a damaged-wall panel hung 6 cm proud of that — front at 8.84, see
+   * ModelProps' PANEL_* constants — so a frame hung on the plaster would be buried in masonry. 8.825
+   * puts the 3 cm frame box's back exactly on 8.84 and its photograph 1.1 cm proud of the wood, which is
+   * the same relief the mantel versions had.
+   *
+   * Same four z positions and the same four sizes as on the shelf, so the clue text still reads left to
+   * right in the order it describes, and all four centred on one line at 1.5 — picture height, matching
+   * painting-sun.glb on the north wall — which leaves their tops uneven because the frames are four
+   * different heights. That is what four things hung by hand over forty years looks like.
+   */
   const frames: Array<[number, number, number]> = [[5.12, 0.24, 0.3], [5.68, 0.22, 0.27], [6.32, 0.26, 0.32], [6.88, 0.2, 0.25]];
-  for (const [fz, fw, fh] of frames) frame(b, m, 8.62, 1.22 + fh / 2, fz, fw, fh, 'x', -1);
-  at['living.mantel'] = new Vector3(8.32, 1.36, 6.0);
-  aabbs.push(aabbOf(8.72, 0, 6.0, 0.19, 1.13, 1.25));
-  // Cold ash, and one log that was never burned.
-  b.box(m.dark, 0.24, 0.05, 0.9, 8.8, 0.09, 6.0);
-  b.cyl(m.wood, 0.07, 0.08, 0.5, 6, 8.78, 0.16, 6.1, 'z');
+  for (const [fz, fw, fh] of frames) frame(b, m, 8.825, 1.5, fz, fw, fh, 'x', -1);
+  at['living.mantel'] = new Vector3(8.55, 1.5, 6.0);
 
-  // Armchair, facing the fire. Worn on the arms and nowhere else.
-  b.box(m.cloth, 0.84, 0.16, 0.86, 6.7, 0.44, 4.7);
-  b.box(m.cloth, 0.16, 0.72, 0.86, 6.32, 0.72, 4.7);
-  for (const dz of [-0.43, 0.43]) b.box(m.cloth, 0.8, 0.2, 0.14, 6.74, 0.62, 4.7 + dz);
-  for (const dx of [-0.34, 0.34]) {
-    for (const dz of [-0.36, 0.36]) b.box(m.wood, 0.07, 0.36, 0.07, 6.7 + dx, 0.18, 4.7 + dz);
-  }
-  aabbs.push(aabbOf(6.7, 0, 4.7, 0.46, 0.48, 0.82));
+  /*
+   * The ledger, now open on table.glb rather than on a table of its own.
+   *
+   * Those numbers are read off that row and its neighbour rather than guessed at, because this is the
+   * one place in this file that stands something on a piece of imported geometry: table.glb is fitted to
+   * height 0.75 at (7.6, 5.4), which measures out as a 0.75 x 0.65 m top at y 0.689, and plate-ceramic
+   * already occupies x 7.352 .. 7.608 / z 5.17 .. 5.43 of it. At (7.79, 5.56) with a 10-degree skew the
+   * board's rotated footprint is x 7.618 .. 7.962 / z 5.415 .. 5.705 — inside the top on both axes, and
+   * 1 cm clear of the plate in x. Retuning that row's `height` moves the top and would strand this; the
+   * comment on the row says as much for the plate, and it now holds for two things.
+   */
+  b.box(m.door, 0.32, 0.045, 0.26, 7.79, 0.7115, 5.56, 0.1);
+  sheet(b, m, 7.79, 0.738, 5.56, 0.3, 0.24, 'flat', 0.1);
+  at['living.ledger'] = new Vector3(7.79, 0.8, 5.56);
 
-  // The ledger, open on the little table where she left off counting.
-  table(b, m, 6.7, 3.6, 0.5, 0.5, 0.6, 0);
-  b.box(m.door, 0.32, 0.045, 0.26, 6.7, 0.623, 3.6, -0.14);
-  sheet(b, m, 6.7, 0.648, 3.6, 0.3, 0.24, 'flat', -0.14);
-  at['living.ledger'] = new Vector3(6.7, 0.72, 3.6);
-  aabbs.push(aabbOf(6.7, 0, 3.6, 0.26, 0.26, 0.6));
+  /*
+   * The shopping list, pinned to the north wall instead of weighted down with a cup, at the same eye
+   * height as the hall notice and pinned the same way. z 10.02 for the same reason the frames are at
+   * 8.825: the facing on this wall fronts at 10.04, and `sheet` builds 8 mm of paper, so a sheet centred
+   * here spans 10.016..10.024 and clears the facing by 1.6 cm. The pin's 2 cm cube at 10.0 then stands
+   * clear of the paper's own front face as well, which is what makes it read as pinning it rather than as
+   * a stud in the wall beside it.
+   *
+   * x 2.0 is where the dining table's copy of it was, and it is 0.9 m west of the window's west jamb at
+   * 2.9 — so it is still the west end of the room, and it is beside the window, which is where a list of
+   * things to buy actually gets pinned. The anchor stands 0.26 m into the room, the offset hall.notice
+   * uses, and the north wall's standable band reaches z 9.78, so the player can put their face on it.
+   */
+  sheet(b, m, 2.0, 1.45, 10.02, 0.26, 0.32, 'z');
+  b.box(m.iron, 0.02, 0.02, 0.02, 2.0, 1.62, 10.0);
+  at['living.list'] = new Vector3(2.0, 1.45, 9.76);
 
-  // Dining table, one chair, and the shopping list weighted down with a cup.
-  table(b, m, 2.0, 8.4, 1.1, 1.7, 0.74, 0);
-  aabbs.push(aabbOf(2.0, 0, 8.4, 0.56, 0.86, 0.74));
-  sheet(b, m, 2.0, 0.745, 7.94, 0.26, 0.32, 'flat', 0.08);
-  b.cyl(m.paper, 0.045, 0.038, 0.08, 8, 2.04, 0.79, 7.9);
-  at['living.list'] = new Vector3(2.0, 0.83, 7.94);
-  b.box(m.wood, 0.44, 0.05, 0.44, 2.0, 0.45, 7.1);
-  b.box(m.wood, 0.44, 0.52, 0.05, 2.0, 0.73, 6.89);
-  for (const dx of [-0.17, 0.17]) {
-    for (const dz of [-0.17, 0.17]) b.box(m.wood, 0.05, 0.43, 0.05, 2.0 + dx, 0.215, 7.1 + dz);
-  }
-  aabbs.push(aabbOf(2.0, 0, 7.05, 0.26, 0.3, 0.5));
-
-  b.box(m.cloth, 2.8, 0.02, 2.8, 6.2, 0.011, 5.0);
+  /*
+   * No rug. It went with the hall's and the hallway's runners, all three on the same request, and it is
+   * the one of the three that took a note with it: the comment on table.glb's row explains that the row
+   * carries no `shadow` *because* this rug ran under half of it and would have clipped the quad along a
+   * straight line. With the cloth gone that reason is gone, so the row has been given `shadow: 1`.
+   *
+   * Nothing here published cloth into an aabb, so the rugs cost no collider and no contact quad on the
+   * way out. `m.cloth` still has the coats in the hall and this lamp's shade, so the material and its
+   * merged draw call both survive — taking the last user out is what would have needed care.
+   */
 
   // Standing lamp, cold like everything else.
   b.cyl(m.iron, 0.02, 0.02, 1.55, 6, 8.2, 0.79, 8.8);
@@ -321,24 +425,44 @@ function basement({ b, m, aabbs, at }: Ctx): void {
   }
   b.box(m.iron, 0.24, 0.03, 0.06, -15.8, BASE_Y + 0.88, -1.44, 0.5);
 
-  // The tally, cut into the plaster beside the door at the height of someone sitting down.
-  // Ten groups of five in two rows, then the fifty-first mark on its own.
-  //
-  // x = -13.955, and the reasoning is worth keeping because it has now been paid for twice. The wall
-  // these are scratched into is centred on BASEMENT.x1 = -13.8 and 0.2 thick, so the plaster face is at
-  // -13.900 — and a 14 mm mark centred at -13.890 spans -13.897..-13.883, which is 3 mm *behind* that
-  // face. Fifty-one marks the whole point of the room, invisible except where the depth test went the
-  // other way. Centred 5 mm in front of the face each one stands proud and reads as cut in.
-  //
-  // The face moved. A damaged-wall facing now hangs on this run with its front at -13.960, so the -13.895
-  // that was 5 mm proud of plaster became 5.8 cm behind the visible wall — the same bug, at ten times the
-  // size. -13.955 is that same 5 mm, measured from the surface the player actually sees.
+  /*
+   * The tally, cut into the wall beside the door at the height of someone sitting down. Ten groups of
+   * five in two rows, then the fifty-first mark on its own.
+   *
+   * x = -13.963, and the reasoning is worth keeping because it has now been paid for three times. The
+   * wall these are scratched into is centred on BASEMENT.x1 = -13.8 and 0.2 thick, and the basement is on
+   * its west side, so the plaster face was at -13.900 and "proud" means *more* negative than that. A 14 mm
+   * mark centred at -13.890 spans -13.897..-13.883, i.e. 3 mm behind the face: fifty-one marks that are
+   * the whole point of the room, invisible except where the depth test went the other way.
+   *
+   * Then the face moved. A damaged-wall facing hangs on this run with its front at -13.960, which put the
+   * -13.895 that had been tuned against plaster 5.8 cm behind the visible wall — the same bug at ten times
+   * the size — and it was corrected to -13.955.
+   *
+   * Both of those corrections moved the centre by 5 mm and both were described as giving 5 mm of relief.
+   * Neither did: a 14 mm mark centred 5 mm from a face still has 7 mm of itself on the wall side, so
+   * -13.895 stood 2 mm proud of plaster and -13.955 stands 2 mm proud of the facing. The geometry was
+   * consistent across the change; only the number in the prose was ever wrong.
+   *
+   * -13.963 is the first value here that means what the comment says. Its face is at -13.970, a clean
+   * centimetre proud, and its back at -13.956 is buried in the panel. The extra relief over the old 2 mm
+   * is not pedantry: 2 mm was enough against flat plaster and is not enough against a *scan*, whose
+   * surface has centimetres of its own relief to swallow a mark that barely breaks the plane.
+   *
+   * z starts at 2.70 rather than 2.45 for a different reason on the same wall. BASEMENT's east side is
+   * faced by two runs, z -2..0 and z 2.6..6.6, with nothing between them — that gap is the shaft doorway,
+   * and the wall across it belongs to SHAFT and is faced from the shaft side only. At 2.45 the first group
+   * of each row put three of its five marks at z 2.444..2.606, in front of no panel at all, floating 6 cm
+   * off the plaster with daylight behind them. The panel's own span is 2.65..6.55 after wallPanels' 5 cm
+   * corner reveal, so 2.70 is the first origin that seats every mark of every group on scanned wall, and
+   * the fifty-first moves with them to keep the gap that makes it read as separate.
+   */
   for (let g = 0; g < 10; g++) {
     const gy = BASE_Y + 0.62 - Math.floor(g / 5) * 0.26;
-    const gz = 2.45 + (g % 5) * 0.46;
-    for (let k = 0; k < 5; k++) b.box(m.dark, 0.014, 0.19, 0.012, -13.955, gy, gz + k * 0.075);
+    const gz = 2.7 + (g % 5) * 0.46;
+    for (let k = 0; k < 5; k++) b.box(m.dark, 0.014, 0.19, 0.012, -13.963, gy, gz + k * 0.075);
   }
-  b.box(m.dark, 0.016, 0.2, 0.014, -13.955, BASE_Y + 0.36, 4.78);
+  b.box(m.dark, 0.016, 0.2, 0.014, -13.962, BASE_Y + 0.36, 5.03);
   at['basement.tally'] = new Vector3(-14.16, BASE_Y + 0.55, 3.6);
 
   // Wear along the screen's track, where the leaves have been slid back and forth. Mentioned in the
@@ -400,22 +524,41 @@ function ritual({ b, m, aabbs, at }: Ctx): void {
     candle(b, m, A.x + Math.cos(a) * 1.62, BASE_Y, A.z + Math.sin(a) * 1.62, 0.16 + (i % 3) * 0.04);
   }
 
-  // Her records, the whole of the west wall. Eleven columns, and a twelfth begun.
+  /*
+   * Her records, the whole of the west wall. Eleven columns, and a twelfth begun.
+   *
+   * x -29.82 for the paper and -29.80 for the nails, not the -29.88 / -29.85 they were pinned at. This
+   * room's west wall is at x -30 and wears a damaged-wall facing whose front stands 6 cm proud of the
+   * plaster, at -29.84. `sheet` is 8 mm thick, so -29.88 spanned -29.884..-29.876: forty-four pieces of
+   * paper entirely inside the wall, with twenty-two nail heads whose front faces landed exactly on -29.84
+   * and so presented no relief at all, only something for the depth buffer to argue with. The wall the
+   * header calls "the last thing the player needs told to them" was telling them nothing.
+   *
+   * -29.82 clears the facing by 1.6 cm and -29.80 puts the heads 6 mm in front of the paper's own face,
+   * which is the pair living.list and hall.notice use against their facings. Every paper x on this wall
+   * moves together — the two photographs, the name strip, the room strip, and the twelfth column's lone
+   * strip below — because they are one flat collage and a 6 cm step inside it would read as a shelf.
+   */
   for (let c = 0; c < 11; c++) {
     const cz = 0.2 + c * 0.4;
-    sheet(b, m, -29.88, BASE_Y + 1.72, cz, 0.3, 0.36, 'x');
-    sheet(b, m, -29.88, BASE_Y + 1.3, cz, 0.3, 0.36, 'x');
-    b.box(m.paper, 0.006, 0.07, 0.3, -29.88, BASE_Y + 1.02, cz);
-    b.box(m.paper, 0.006, 0.05, 0.24, -29.88, BASE_Y + 0.9, cz);
-    for (const py of [1.9, 1.48]) b.box(m.iron, 0.02, 0.016, 0.016, -29.85, BASE_Y + py, cz);
+    sheet(b, m, -29.82, BASE_Y + 1.72, cz, 0.3, 0.36, 'x');
+    sheet(b, m, -29.82, BASE_Y + 1.3, cz, 0.3, 0.36, 'x');
+    b.box(m.paper, 0.006, 0.07, 0.3, -29.82, BASE_Y + 1.02, cz);
+    b.box(m.paper, 0.006, 0.05, 0.24, -29.82, BASE_Y + 0.9, cz);
+    for (const py of [1.9, 1.48]) b.box(m.iron, 0.02, 0.016, 0.016, -29.8, BASE_Y + py, cz);
   }
-  b.box(m.iron, 0.03, 0.018, 0.018, -29.85, BASE_Y + 1.9, 4.6);
-  b.box(m.paper, 0.006, 0.05, 0.22, -29.88, BASE_Y + 0.9, 4.6);
+  // The twelfth column: one nail, no photograph, the word Hall already written underneath. This nail is
+  // 3 cm deep where the other twenty-two are 2, so it stands 1 cm further out of the wall than any nail
+  // that has something hanging on it — nothing depends on that, but it is why the number differs.
+  b.box(m.iron, 0.03, 0.018, 0.018, -29.8, BASE_Y + 1.9, 4.6);
+  b.box(m.paper, 0.006, 0.05, 0.22, -29.82, BASE_Y + 0.9, 4.6);
   at['ritual.records'] = new Vector3(-29.55, BASE_Y + 1.4, 2.3);
 
-  // The rite, pinned at eye height on the wall by the door — the last thing read, first obeyed.
-  sheet(b, m, -25.4, BASE_Y + 1.52, -0.88, 0.36, 0.46, 'z');
-  b.box(m.iron, 0.02, 0.02, 0.02, -25.4, BASE_Y + 1.72, -0.85);
+  // The rite, pinned at eye height on the wall by the door — the last thing read, first obeyed. Same
+  // correction as the records wall, on the south run this time: z -1 is the wall, -0.84 is the facing's
+  // front, and the sheet was at -0.88 with its pin's face flush on -0.84. -0.82 and -0.80 restore it.
+  sheet(b, m, -25.4, BASE_Y + 1.52, -0.82, 0.36, 0.46, 'z');
+  b.box(m.iron, 0.02, 0.02, 0.02, -25.4, BASE_Y + 1.72, -0.8);
   at['ritual.rite'] = new Vector3(-25.4, BASE_Y + 1.52, -0.6);
 
   // A chair with straps on the arms, set well back from the circle.
@@ -446,11 +589,12 @@ function ritual({ b, m, aabbs, at }: Ctx): void {
  * A contact shadow under every collider this file emitted. See ContactShadow for what they are.
  *
  * Driven off the colliders rather than off a second hand-written list of positions, and that is the
- * whole reason this is eight lines instead of sixty: `aabbs` here is exactly the furniture — twenty
- * boxes, every one of them a thing standing on a floor, since walls and casings come from HouseRooms
- * and never pass through this file. So the footprint and the floor are both already known and correct,
- * and a table that gets nudged 20 cm in a later edit takes its shadow with it. Sharing one material
- * means Batch merges all twenty into a single draw call.
+ * whole reason this is eight lines instead of sixty: `aabbs` here is exactly the furniture — every entry
+ * a thing standing on a floor, since walls and casings come from HouseRooms and never pass through this
+ * file. So the footprint and the floor are both already known and correct, and a table that gets nudged
+ * 20 cm in a later edit takes its shadow with it. A table that gets *deleted* takes it with it too,
+ * which is what the several rounds of furniture removal this file has been through cost here: nothing.
+ * Sharing one material means Batch merges however many there are into a single draw call.
  *
  * `minY` is the floor and not an assumption about it: every push in this file seats its box on the
  * storey it belongs to, which is why the basement's five come out at BASE_Y without this knowing that

@@ -159,6 +159,12 @@ const PLAN = {
   // and simplify() are what would break a clip that translates whole nodes, and the clip is the point of
   // the asset. HouseScene drives it from the interaction instead of playing it on load.
   'sliding_japanese_doors_animated.glb': { out: 'doors-sliding.glb' },
+  // The ritual room's coffin, replacing the procedural plinth makeAltar() used to build out of boxes.
+  // It ships two clips — "coffin_top|open.001" and "coffin_top|open.002" — both of which rotate the
+  // lid node open, so — like the sliding doors — no `ratio` and no `dropAnims`: weld() and simplify()
+  // are what break a clip that moves a whole node, and the lid opening is the point of the asset.
+  // HouseScene drives it on puzzle-solve instead of playing it on load.
+  'animated_coffin.glb': { out: 'coffin.glb' },
   /**
    * The wooden floor, and the one entry here that ships an *image* rather than a model — `bake` instead
    * of `out`, handled by pass A2 (tools/bake-floor.mjs) and never reaching the geometry loop.

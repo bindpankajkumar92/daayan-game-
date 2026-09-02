@@ -61,8 +61,20 @@ export const CELLAR_DOOR = { x: -9, z: 1.3, half: 0.8, top: 2.1 };
 export const SHAFT = { x0: -13.8, x1: -9, z0: 0, z1: 2.6 };
 export const BASEMENT = { x0: -22, x1: -13.8, z0: -2, z1: 6.6 };
 export const RITUAL = { x0: -30, x1: -22, z0: -1, z1: 5.6 };
-/** Doorway at the bottom of the stairs, into the basement. */
-export const BASEMENT_DOOR = { x: -13.8, z: 1.3, half: 1.0, bottom: BASE_Y, top: BASE_Y + 2.1 };
+/**
+ * Doorway at the bottom of the stairs, into the basement.
+ *
+ * 2.45 above the cellar floor rather than the 2.1 the ground-floor doors use, for the same reason
+ * UPPER_DOOR stands at 2.5: this one sits where the stair's last two treads rise past it. The
+ * controller's fall branch tests a sphere of the player's radius about the *eye* with no overhead
+ * skip (FPController.collidesAabbAt), so a standing head reaches eye + 0.35 = feet + 2.05. On the
+ * flat cellar floor that clears a 2.1 header by 5 cm, but the second-to-last tread (y −2.8, its east
+ * edge at x −13.52) puts the head sphere's top at −0.75 while its west edge (−13.87) is still inside
+ * the header's x span (−13.90 .. −13.70) — a 15 cm catch, felt as the face thudding the lintel on the
+ * way down. At 2.45 the worst point clears by 20 cm, and 2.95 m of header still stands under the
+ * shaft's 5.4 m top, so the way in reads as a doorway and not a hole punched in the wall.
+ */
+export const BASEMENT_DOOR = { x: -13.8, z: 1.3, half: 1.0, bottom: BASE_Y, top: BASE_Y + 2.45 };
 /** Hidden opening behind the movable shelf on the basement's far wall. */
 export const RITUAL_DOOR = { x: -22, z: 2.3, half: 0.9, bottom: BASE_Y, top: BASE_Y + 2.1 };
 
@@ -207,15 +219,17 @@ export const UPPER_PATCH = {
  * y here is the measured mattress (0.47 m) plus the standing eye height; HouseScene replaces it with the
  * model's exact fitted value as soon as bed.glb lands.
  *
- * x follows that bed. It stood against the west wall at -8.26 while HouseProps also built a procedural
- * bed in the middle of the room; the procedural one is gone and the imported one took its place, so the
- * spawn is now the middle of the floor. z stays at 8.05 — 0.95 m south of the bed's centre, which is its
- * foot end on a 2.1 m mattress — and so does everything tuned against it.
+ * x and z follow that bed. It stood against the west wall at -8.26 while HouseProps also built a
+ * procedural bed in the middle of the room; the procedural one is gone, the imported one took its place,
+ * and it has since been turned length-along-x back against the west wall (ModelProps' bed row). Its foot
+ * end is the +x end at -6.75, so the spawn sits at x -7.0 — a quarter metre in from the foot edge — on
+ * the bed's centre line at z 9.0. Everything tuned against the old (-6.2, 8.05) moves with it.
  *
- * yaw -0.45 faces diagonally toward the bedroom door rather than into a wall or straight at the
- * headboard, so the first frame immediately shows a way out of the room.
+ * yaw -0.30 points straight at the bedroom door from the new spot — the door is south-east of the bed
+ * now, and atan2 of its offset is -0.30 — so the first frame immediately shows a way out of the room
+ * rather than the headboard.
  */
-export const SPAWN = { x: -6.2, y: 2.17, z: 8.05, yaw: -0.45 };
+export const SPAWN = { x: -7.0, y: 2.17, z: 9.0, yaw: -0.3 };
 
 // --- Stairs ---
 /** Top landing, flat, just outside the cellar door. */
@@ -244,26 +258,9 @@ export function stairFloors(): FloorRect[] {
   return out;
 }
 
-/** Riser + tread boxes, so the stair reads as a stair instead of an invisible slope. */
-export function stairTreads(): Array<{ cx: number; cy: number; cz: number; w: number; h: number; d: number }> {
-  return (
-    stairFloors()
-      // First off the top because that rect is the landing, not a step. Last off the bottom because
-      // that rect *is* the cellar floor: its tread box came out 0.12 thick with its top face at
-      // exactly BASE_Y, i.e. buried in the floor slab with 0.73 m2 of it coplanar — trim against
-      // stone, in two different meshes, picking a different winner as the player came down the
-      // stairs. There was never a step to see there; you step off the last tread onto the floor.
-      .slice(1, -1)
-      .map((f) => ({
-        cx: (f.x0 + f.x1) / 2,
-        cy: f.y - 0.06,
-        cz: (f.z0 + f.z1) / 2,
-        w: f.x1 - f.x0,
-        h: 0.12,
-        d: f.z1 - f.z0,
-      }))
-  );
-}
+// No tread geometry for the cellar stair either, as upstairs: stair-wood.glb is the geometry (see the
+// `stair-cellar.glb` row in ModelProps). stairFloors() above stays — the model's 0.75 m rise is more
+// than the controller's step-up, so the walkable path remains the fifteen procedural steps.
 
 // --- Upper stair ---
 // Measured off stair-wood.glb at the scale ModelProps gives it, not chosen: eight treads rising

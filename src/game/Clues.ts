@@ -247,7 +247,7 @@ export const CLUES: Record<string, ClueSpec> = {
     raises: 'SUSPICIOUS',
     doc: {
       title: 'A household ledger',
-      sub: 'Living room, open on the arm of the chair',
+      sub: 'Living room, open on the side table',
       style: 'book',
       lines: [
         'Columns ruled by hand: NAME. ROOM. ARRIVED. SETTLED.',
@@ -262,8 +262,8 @@ export const CLUES: Record<string, ClueSpec> = {
     raises: 'DISTURBING',
     firstToast: 'The frames are decades apart.',
     doc: {
-      title: 'Photographs on the mantelpiece',
-      sub: 'Living room',
+      title: 'Photographs on the wall',
+      sub: 'Living room, four frames in a row',
       style: 'photo',
       lines: [
         'Four photographs in four frames, and the frames are the only way to date them: pressed tin, then painted wood, then cheap steel, then plastic.',
@@ -278,7 +278,7 @@ export const CLUES: Record<string, ClueSpec> = {
     raises: 'SUSPICIOUS',
     doc: {
       title: 'A shopping list',
-      sub: 'Living room, weighted down with a cup',
+      sub: 'Living room, pinned beside the window',
       style: 'note',
       lines: [
         'Flour. Lamp oil, two tins. Nails, the long ones.',

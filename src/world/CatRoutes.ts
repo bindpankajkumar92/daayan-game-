@@ -3,9 +3,11 @@
  *
  * Coordinates follow HouseRooms, the same frame as ModelProps: +x east, +z north, y the floor the
  * node stands on. Every node was placed by measuring the room against the wall and furniture boxes
- * the controller collides with, at the cat's own size rather than the player's — a 0.15 m radius gets
- * through the 0.595 m gap between the side table and the fireplace that the player's 0.35 m cannot,
- * which is why this is a separate graph and not a reuse of anything the player walks.
+ * the controller collides with, at the cat's own size rather than the player's — a 0.15 m radius got
+ * through the 0.595 m gap between the side table and the fireplace that the player's 0.35 m could not,
+ * which is why this is a separate graph and not a reuse of anything the player walks. That particular
+ * gap is now open floor, the fireplace having been removed, but the reason for a second graph is not:
+ * the basement and the ritual room still have squeezes only the cat fits through.
  *
  * Two things are deliberate:
  *
@@ -64,7 +66,7 @@ const GROUND: readonly (readonly [string, number, number])[] = [
   ['bd_westmid', -7.6, 4.3],
   ['bd_window', -8.3, 4.3],
   ['bd_nw', -6.2, 6.4],
-  // Living room, as a ring round the dining table with a spur to the doorway.
+  // Living room, as a ring round where the dining table stood, with a spur to the doorway.
   ['lv_thr', 5.4, 2.6],
   ['lv_in', 5.45, 3.7],
   ['lv_se', 6.0, 3.0],
@@ -132,13 +134,20 @@ export const CAT_NODES: readonly CatNode[] = [
  * Each string is a chain: consecutive names are joined. A name repeated at the end closes a loop.
  *
  * The omissions matter as much as the entries, and each of these was tried and rejected against the
- * furniture: lv_ne–lv_w crosses the dining table, lv_sw–lv_thr crosses the bookshelf, a direct
+ * furniture: lv_ne–lv_w crossed the dining table, lv_sw–lv_thr crosses the bookshelf, a direct
  * hw_west–bd_thr diagonal cuts the bedroom door leaf, rt_se–rt_sw run at z = 1.0 passes 0.02 m from the
  * altar, rt_altar_e–rt_sw crosses the altar itself, and a direct bs_west–rt_thr diagonal — the obvious
  * way through the ritual doorway — clips the wall's solid stretch south of the opening at x
  * -22.10..-21.90 / z -2.10..1.40 and grazes a parked leaf on the way, which is what bs_screen is for.
  * bs_mid–bs_n_w clipped the support post until bs_n_w moved off
  * the north wall; it is clear from (-19.0, 1.0) to (-18.6, 4.7) and nowhere near clear to the old one.
+ *
+ * Past tense on the first of those, and it is the only one: the dining table, the fireplace, the ledger
+ * table, the chair and the rugs have all since been removed from HouseProps, so several of this graph's
+ * detours now go round nothing. Nothing is broken by that — a route that avoided a box is still a legal
+ * route once the box is gone, and the cat taking the long way round an empty floor is invisible at 0.15 m
+ * radius. Left alone deliberately: re-cutting the living room's ring to run straight through where the
+ * table stood would be re-authoring a working graph for no visible gain, and the furniture may come back.
  *
  * lv_thr–lv_se is the one the route check caught rather than the eye: the living room's south wall
  * runs x 5.80..9.10 and the doorway is the gap west of it, so the only way in is lv_thr–lv_in.
