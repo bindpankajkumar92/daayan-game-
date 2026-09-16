@@ -19,9 +19,9 @@
 
 import { Box3, Group, Vector3, type Object3D } from 'three';
 import { UPPER, UPPER_DOOR, UP_Y } from '@/world/HouseRooms';
-import type { AABB } from '@/player/FPController';
+import type { AABB, FPController } from '@/player/FPController';
 import type { InteractionSystem } from '@/game/Interaction';
-import { aabbOf } from '@/world/Fixtures';
+import { aabbOf, trackLeaf } from '@/world/Fixtures';
 
 /**
  * The moving parts, by the names door.glb ships. Matched as substrings because the exporter appends
@@ -35,8 +35,13 @@ const OPEN_ANGLE = (100 * Math.PI) / 180;
 /** Slow enough to be a heavy door and quick enough not to hold the player at the threshold. */
 const OPEN_TIME = 1.4;
 
+/** See InnerDoor.SETTLE_TIME: one more attempt to move the keep-out onto a leaf that has swung. */
+const SETTLE_TIME = 0.5;
+
 export interface UpperDoorDeps {
   aabbs: AABB[];
+  /** For the leaf's own keep-out: its radius, and where it is when the leaf needs to move. */
+  player: FPController;
   interact: InteractionSystem;
   tween: (dur: number, apply: (k: number) => void) => void;
   toast: (msg: string) => void;
@@ -80,23 +85,88 @@ export function armUpperDoor(root: Object3D, deps: UpperDoorDeps): void {
   const block = aabbOf(UPPER.x0, UP_Y, UPPER_DOOR.z, 0.14, UPPER_DOOR.half, UPPER_DOOR.top);
   deps.aabbs.push(block);
 
+  // The leaf's own keep-out, over the leaf parts only: the frame stays out of it, because a keep-out
+  // measured round a frame would seal the opening it stands in. See leafBoxes for the measurements.
+  const follow = trackLeaf(leaf, deps.aabbs, deps.player);
+  const settle = (): void => {
+    deps.tween(SETTLE_TIME, (k) => {
+      if (follow()) return;
+      if (k >= 1) settle();
+    });
+  };
+
   let open = false;
+  /**
+   * True while a swing is in flight, so a second press cannot reverse a leaf that is halfway round.
+   * The prompt is withdrawn for the duration rather than left up doing nothing.
+   */
+  let busy = false;
+  /** Where the blocker sits when the door is shut, so closing can put it back exactly. */
+  const shutBlockY = { min: block.minY, max: block.maxY };
+
+  /**
+   * Put the doorway blocker back, once the player is clear of the opening.
+   *
+   * The box fills the doorway, so restoring it around a player standing in it would leave them inside
+   * a solid collider — and `FPController` only ignores boxes that end *under* the feet, which a
+   * full-height one does not. So this waits for the player to step out, using the same re-armed tween
+   * idiom as `settle` and for the same reason: the geometry has to go somewhere the player currently
+   * is, and the player is the one who decides when that stops being true.
+   */
+  const restoreBlock = (): void => {
+    deps.tween(SETTLE_TIME, (k) => {
+      const r = deps.player.getRadius();
+      const p = deps.player.position;
+      const inside =
+        p.x + r > block.minX && p.x - r < block.maxX && p.z + r > block.minZ && p.z - r < block.maxZ;
+      if (inside) {
+        if (k >= 1) restoreBlock();
+        return;
+      }
+      block.minY = shutBlockY.min;
+      block.maxY = shutBlockY.max;
+    });
+  };
+
   deps.interact.add({
     id: 'upper.door',
     pos: new Vector3(UPPER.x0, UP_Y + 1.2, UPPER_DOOR.z),
     reach: 2.2,
-    label: () => (open ? null : 'Open the door'),
+    label: () => (busy ? null : open ? 'Close the door' : 'Open the door'),
     onUse: () => {
-      if (open) return;
-      open = true;
-      // Dropped below the world rather than removed: FPController ignores boxes that end under the
-      // player's feet, and the array is shared.
-      block.minY = -60;
-      block.maxY = -59.8;
+      if (busy) return;
+      busy = true;
+      open = !open;
+
+      if (open) {
+        // Dropped below the world rather than removed: FPController ignores boxes that end under the
+        // player's feet, and the array is shared.
+        block.minY = -60;
+        block.maxY = -59.8;
+        deps.tween(OPEN_TIME, (k) => {
+          pivot.rotation.y = shut + k * OPEN_ANGLE;
+          const landed = follow();
+          if (k >= 1) {
+            busy = false;
+            if (!landed) settle();
+          }
+        });
+        deps.toast('The door gives, and the flat exhales.');
+        return;
+      }
+
+      // Closing. The blocker goes back only once the leaf has finished travelling, because until then
+      // the doorway is still the thing the player is walking through.
       deps.tween(OPEN_TIME, (k) => {
-        pivot.rotation.y = shut + k * OPEN_ANGLE;
+        pivot.rotation.y = shut + (1 - k) * OPEN_ANGLE;
+        const landed = follow();
+        if (k >= 1) {
+          busy = false;
+          if (!landed) settle();
+          restoreBlock();
+        }
       });
-      deps.toast('The door gives, and the flat exhales.');
+      deps.toast('You pull the door shut behind you.');
     },
   });
 }

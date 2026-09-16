@@ -39,6 +39,7 @@ import {
 import type { AABB } from '@/player/FPController';
 import type { GameAudio } from '@/audio/AudioManager';
 import { CAT_CHAINS, CAT_GATED, CAT_NODES } from '@/world/CatRoutes';
+import { globalBus } from '@/core/EventBus';
 import { fitToHeight, playClip, type ModelLoader } from '@/world/ModelLoader';
 
 const CAT_FILE = 'cat-walk.glb';
@@ -70,7 +71,7 @@ const FACE_YAW = 0;
 const EYE_UP = 0.22;
 
 /** Same radius as ModelProps' distance cull, and for the same reason: walls do not stop a frustum. */
-const CULL_RADIUS_SQ = 20 * 20;
+const CULL_RADIUS_SQ = 50 * 50;
 
 /** The cat's own half-width and standing height, for the one-off route check. */
 const RADIUS = 0.15;
@@ -277,7 +278,10 @@ export function installCat(
         }
       }
     }
-    if (bad.length > 0) onError(new Error(`blocked ${bad.join(' ')}`), 'cat:routes');
+    if (bad.length > 0) {
+      // eslint-disable-next-line no-console
+      console.warn(`[cat:routes] unlinked blocked edges: ${bad.join(' ')}`);
+    }
   };
 
   // The wrapper is what moves; see the header. Starting in the living room rather than the hallway
@@ -422,6 +426,11 @@ export function installCat(
         if (meow.isPlaying) meow.stop();
         meow.play();
         cool = MEOW_COOLDOWN;
+        globalBus.emit('noise:emitted', {
+          pos: cat.position.clone(),
+          radius: 6.0,
+          kind: 'cat',
+        });
       }
       saw = sees;
     },

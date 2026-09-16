@@ -1,0 +1,731 @@
+
+===== PAGE 1 =====
+DAAYAN AI SYSTEM — COMPLETE
+IMPLEMENTATION SPECIFICATION
+1. Objective
+Implement a highly believable, responsive, and scary enemy AI named Daayan for the 3D first-person
+horror game.
+Daayan should feel intelligent without feeling like a cheating AI. Her behavior must be driven by:
+Player visibility
+Player-generated sounds
+Last known player position
+Memory and confidence
+Navigation/pathfinding
+Search behavior
+Controlled prediction
+Context-aware decision making
+Human-like movement and reactions
+Do NOT use an LLM, neural network, or machine-learning model for the core gameplay AI. Use
+deterministic game-AI systems that are efficient enough for real-time gameplay.
+The AI must prioritize believability, suspense, fairness, and horror over raw optimality.
+2. HIGH-LEVEL ARCHITECTURE
+Create Daayan as a modular AI system:
+DaayanAI ├── PerceptionSystem │ ├── VisionSystem │ └── HearingSystem │ ├──
+MemorySystem │ ├── LastSeenPosition │ ├── LastHeardPosition │ ├── LastKnownPosition │
+└── Confidence │ ├── DecisionSystem │ └── Hierarchical Finite State Machine │ ├──
+NavigationSystem │ ├── Pathfinding │ ├── Waypoints │ └── Dynamic Destination Updates │
+├── SearchSystem │ ├── Search Area Selection │ ├── Search Points │ └── Search Timeout │
+├── PredictionSystem │ ├── MovementController │ ├── Acceleration │ ├── Deceleration │
+├── Turn Speed │ └── Rotation Smoothing │ └── AnimationController
+Keep each subsystem independent so it can be modified or tuned without rewriting the entire AI.
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+1
+
+===== PAGE 2 =====
+3. CORE AI STATES
+Implement a hierarchical state machine with these states:
+IDLE PATROL INVESTIGATE_SOUND SUSPICIOUS CHASE SEARCH INTERCEPT ATTACK RETURN_TO_PATROL
+STUNNED
+Each state must have:
+Enter logic
+Update logic
+Exit logic
+Transition conditions
+Do not create one giant AI function containing all behavior.
+4. STATE PRIORITY
+Use the following priority hierarchy:
+ATTACK
+PLAYER_VISIBLE
+HIGH_CONFIDENCE_PLAYER_LOCATION
+LOUD_SOUND
+MEDIUM_SOUND
+INVESTIGATION
+SUSPICIOUS_ACTIVITY
+PATROL
+Higher-priority events must interrupt lower-priority states.
+Example:
+Daayan is patrolling.
+If she hears a loud object:
+• 
+• 
+• 
+• 
+2
+
+===== PAGE 3 =====
+PATROL → INVESTIGATE_SOUND
+If she sees the player while investigating:
+INVESTIGATE_SOUND → CHASE
+If the player disappears:
+CHASE → SEARCH
+If another loud sound occurs during SEARCH:
+SEARCH → INVESTIGATE_SOUND
+5. PATROL SYSTEM
+Daayan must not simply move randomly.
+Create a set of meaningful navigation points throughout the house.
+Each waypoint should have metadata such as:
+Room
+Importance
+Visit frequency
+Last visit time
+Nearby hiding spots
+Nearby doors
+Nearby player activity
+Preferred dwell time
+Select the next waypoint using a weighted scoring system.
+Example:
+score = distanceWeight
+roomImportance
+timeSinceLastVisit
+recentPlayerActivity
+controlledRandomness
+Avoid repeatedly selecting the same waypoint.
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+3
+
+===== PAGE 4 =====
+Daayan should:
+Move toward waypoint.
+Arrive.
+Slow down naturally.
+Look around.
+Pause for a short randomized duration.
+Optionally inspect the environment.
+Select another waypoint.
+Introduce controlled randomness so behavior does not become completely predictable.
+6. VISION SYSTEM
+Implement realistic player detection using:
+Detection range
+Field of view
+Vertical detection limits
+Distance attenuation
+Line-of-sight raycasting
+Obstacle checks
+Do NOT detect the player simply because the player is inside a radius.
+Basic flow:
+distance check → FOV check → line-of-sight check → visibility evaluation → confidence update
+The system should support partial visibility.
+Example:
+100% visibility → immediate strong detection
+70% visibility → strong suspicion
+40% visibility → weak suspicion
+0% visibility → cannot see player
+The AI must never see through walls.
+Use the Daayan's eye/head position as the raycast origin rather than her body center.
+1. 
+2. 
+3. 
+4. 
+5. 
+6. 
+7. 
+• 
+• 
+• 
+• 
+• 
+• 
+4
+
+===== PAGE 5 =====
+Use multiple rays when necessary to make detection more reliable:
+head torso legs
+This prevents tiny objects from incorrectly blocking all vision.
+7. VISION CONFIDENCE
+Do not make detection binary.
+Maintain:
+visionConfidence = 0.0 → 1.0
+Increase confidence while the player is visible.
+Decrease confidence while the player is partially visible or hidden.
+Example concept:
+Visible continuously: confidence rapidly increases.
+Player briefly moves behind an object: confidence decreases.
+Player fully disappears: confidence decays over time.
+Use hysteresis so the AI does not rapidly switch between visible/not-visible every frame.
+8. HEARING SYSTEM
+Implement an event-based hearing system.
+Every important player/environment sound should produce:
+SoundEvent { position loudness type timestamp }
+Possible sound types:
+PLAYER_FOOTSTEP PLAYER_SPRINT DOOR_OPEN DOOR_CLOSE OBJECT_DROP OBJECT_THROW
+OBJECT_BREAK FALL SPECIAL_NOISE
+5
+
+===== PAGE 6 =====
+Every sound has a loudness value.
+Example:
+Crouch movement = very low
+Normal walking = low
+Running = medium/high
+Door slam = high
+Heavy object = very high
+Calculate perceived loudness based on:
+perceivedLoudness = baseLoudness × distanceFalloff × obstructionModifier
+Nearby loud sounds should strongly attract Daayan.
+Distant quiet sounds may be ignored.
+Walls and doors should reduce perceived sound rather than always completely blocking it.
+9. SOUND INVESTIGATION
+When Daayan hears a sound:
+PATROL → INVESTIGATE_SOUND
+She should navigate toward the estimated sound position.
+When she reaches the area:
+Slow down.
+Look around.
+Search nearby navigation points.
+Check nearby hiding spots if appropriate.
+Wait briefly.
+Re-evaluate environment.
+Do NOT make her instantly know that the player was responsible.
+The sound only provides a probable location.
+1. 
+2. 
+3. 
+4. 
+5. 
+6. 
+6
+
+===== PAGE 7 =====
+10. MEMORY SYSTEM
+Daayan must remember recent player information.
+Store:
+lastSeenPosition lastSeenTime lastHeardPosition lastHeardTime lastKnownPosition confidence
+currentTarget targetVelocity
+When she sees the player:
+lastSeenPosition = player.position
+When she hears the player:
+lastHeardPosition = sound.position
+lastKnownPosition should represent the most reliable current estimate of where the player is.
+Memory must decay over time.
+The AI should gradually become less certain when the player has not been observed.
+11. CHASE SYSTEM
+When Daayan clearly sees the player:
+transition into CHASE.
+During chase:
+Continuously update target position.
+Continuously evaluate line of sight.
+Recalculate navigation target periodically.
+Maintain realistic movement acceleration.
+Maintain realistic turn speed.
+Avoid teleport-like movement.
+Avoid instant 180-degree rotations.
+Do NOT calculate expensive pathfinding every render frame.
+Use throttled updates.
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+7
+
+===== PAGE 8 =====
+Example:
+Perception: approximately 5–10 checks per second.
+Path recalculation: approximately 3–10 times per second depending on distance, movement, and navigation
+complexity.
+Movement: continuous.
+Tune these values based on actual performance.
+12. CHASE TARGETING
+Use two chase modes.
+DIRECT CHASE
+Target:
+player.currentPosition
+Use when Daayan has reliable line of sight.
+INTERCEPT
+Target:
+predictedPlayerPosition
+Use only when appropriate.
+Basic prediction:
+predictedPosition = playerPosition
++ playerVelocity × predictionTime
+Prediction must be limited.
+Do not allow Daayan to predict impossible future positions.
+8
+
+===== PAGE 9 =====
+Prediction should be weaker when:
+Player changes direction frequently.
+Player is moving slowly.
+Navigation confidence is low.
+Daayan has lost direct vision.
+The goal is to make Daayan look intelligent, not omniscient.
+13. LOS LOSS BEHAVIOR
+This is critical.
+When Daayan loses visual contact:
+Do NOT immediately return to patrol.
+Instead:
+CHASE → SEARCH
+Set:
+lastKnownPosition = last reliable player position
+Then:
+Move to lastKnownPosition.
+Check nearby paths.
+Check nearby hiding locations.
+Look toward likely escape directions.
+Listen for new sounds.
+Search for a limited duration.
+If the player becomes visible:
+SEARCH → CHASE
+If a strong sound is detected:
+SEARCH → INVESTIGATE_SOUND
+If search timeout expires:
+• 
+• 
+• 
+• 
+1. 
+2. 
+3. 
+4. 
+5. 
+6. 
+9
+
+===== PAGE 10 =====
+SEARCH → RETURN_TO_PATROL
+14. SEARCH SYSTEM
+Search should feel intelligent and dangerous.
+Do not only walk directly to lastKnownPosition.
+Generate a search area around it.
+Example:
+lastKnownPosition → nearby left position → nearby right position → nearby corridor → nearby doorway →
+nearby hiding locations → nearby likely escape route
+Search points should be prioritized based on:
+Distance
+Visibility
+Player escape direction
+Nearby hiding spots
+Recent sound
+Room connectivity
+Daayan should occasionally pause and look around.
+This pause is important for horror.
+15. ESCAPE DIRECTION ANALYSIS
+When the player disappears from view, estimate the player's likely escape direction.
+Use:
+lastKnownPosition
++ recentPlayerVelocity
++ nearby navigation routes
+Example:
+• 
+• 
+• 
+• 
+• 
+• 
+10
+
+===== PAGE 11 =====
+Player was moving toward corridor A.
+If Daayan loses vision at the corridor entrance, give corridor A a higher search priority.
+This should be probabilistic, not guaranteed.
+16. NAVIGATION
+Use a proper navigation/pathfinding system.
+Preferred:
+NavMesh or equivalent walkable navigation graph.
+Daayan should not:
+Walk through walls
+Walk through blocked geometry
+Take impossible shortcuts
+Get stuck on corners
+Constantly oscillate between two positions
+Implement:
+Path validity check
+Repathing
+Stuck detection
+Alternate route fallback
+If the current path becomes invalid:
+recalculate path.
+If Daayan remains stationary for too long:
+detect stuck condition → recalculate path → choose alternate route.
+17. NAVIGATION COSTS
+Do not treat every route equally.
+Give different traversal costs.
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+11
+
+===== PAGE 12 =====
+Example:
+Open corridor = low cost
+Normal room = low cost
+Stairs = slightly higher
+Narrow passage = higher
+Blocked route = extremely high
+Unavailable route = impossible
+The AI should therefore naturally choose sensible routes.
+18. MOVEMENT MODEL
+Daayan must not move like a sliding capsule.
+Implement:
+Acceleration
+Deceleration
+Maximum speed
+Rotation smoothing
+Turn speed
+Speed changes based on state
+Example:
+PATROL = slow
+INVESTIGATE = medium
+CHASE = fast
+SEARCH = medium/slow
+ATTACK = contextual
+Movement should smoothly transition between speeds.
+• 
+• 
+• 
+• 
+• 
+• 
+12
+
+===== PAGE 13 =====
+19. ROTATION / LOOKING
+Daayan should not always look exactly toward movement direction.
+Implement separate:
+movementDirection
+lookDirection
+This allows behaviors such as:
+Walking forward while looking sideways.
+Stopping and looking around.
+Hearing a sound and turning toward it.
+Searching while scanning the environment.
+Looking at the player before attacking.
+Use smooth interpolation for head/body rotation.
+20. SUSPICIOUS STATE
+Add an intermediate state between normal behavior and full investigation.
+Example triggers:
+Brief visual glimpse
+Very quiet sound
+Object moved unexpectedly
+Door changed state
+Player activity detected but location uncertain
+Behavior:
+PATROL → SUSPICIOUS
+During SUSPICIOUS:
+Slow movement.
+Increased awareness.
+Look toward suspicious direction.
+Listen more carefully.
+Optionally approach slightly.
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+13
+
+===== PAGE 14 =====
+If evidence becomes stronger:
+SUSPICIOUS → INVESTIGATE_SOUND
+If player becomes visible:
+SUSPICIOUS → CHASE
+If nothing happens:
+SUSPICIOUS → PATROL
+This intermediate state is important for creating tension.
+21. FAIRNESS RULES
+The AI must feel threatening but fair.
+Daayan must NOT:
+Know the player's exact position without evidence.
+See through walls.
+Hear every sound regardless of distance.
+Instantly predict every player movement.
+Teleport.
+Instantly rotate 180 degrees.
+Instantly switch from patrol to perfect pursuit.
+All strong decisions must have an in-game reason.
+The player should always be able to understand Daayan's behavior after observing it.
+22. HORROR-SPECIFIC BEHAVIOR
+Do not optimize everything for efficiency.
+Occasionally allow Daayan to:
+Pause in a doorway.
+Slowly look around.
+Walk past the player's hiding area.
+Stop after hearing something.
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+14
+
+===== PAGE 15 =====
+Investigate a wrong nearby location.
+Return unexpectedly.
+Re-check an area after a suspicious event.
+Use controlled randomness.
+The AI should create uncertainty.
+The player should think:
+"Did she actually hear me?"
+rather than:
+"Why did the AI randomly stop?"
+23. DIFFICULTY SCALING
+Create configurable AI parameters.
+Example:
+DaayanConfig:
+visionRange visionFOV visionConfidenceGain visionConfidenceDecay hearingRange hearingSensitivity
+investigationDuration searchDuration searchRadius chaseSpeed patrolSpeed turnSpeed reactionDelay
+predictionStrength memoryDuration repathInterval attackRange
+Do not hardcode these values throughout the codebase.
+Make them easy to tune.
+24. REACTION DELAY
+Do not make Daayan react instantly to every event.
+Add tiny configurable reaction delays.
+Example:
+quiet sound: slower reaction
+• 
+• 
+• 
+15
+
+===== PAGE 16 =====
+loud sound: faster reaction
+clear visual: very fast reaction
+This makes the AI feel more human.
+25. EVENT SYSTEM
+Use centralized events where possible.
+Examples:
+PLAYER_SEEN PLAYER_LOST PLAYER_MADE_SOUND DOOR_CHANGED OBJECT_MOVED PLAYER_ESCAPED
+PLAYER_CAUGHT DAAYAN_STUNNED
+DaayanAI subscribes to relevant events.
+Avoid tightly coupling every gameplay system directly to DaayanAI.
+26. DEBUG MODE
+Create an optional debug mode.
+When enabled, show:
+Vision cone
+Vision rays
+Current state
+Target position
+Last seen position
+Last heard position
+Last known position
+Current path
+Current destination
+Current confidence
+Current sound event
+Prediction target
+Search points
+Example debug display:
+STATE: CHASE VISION: 0.92 TARGET: PLAYER LAST KNOWN: (x,y,z) PATH: VALID PREDICTION: ACTIVE
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+16
+
+===== PAGE 17 =====
+Debug mode must be disabled in production.
+27. PERFORMANCE REQUIREMENTS
+This is a real-time horror game, so optimize aggressively.
+Do NOT:
+Recalculate expensive paths every frame.
+Cast unlimited rays.
+Search every hiding spot every frame.
+Run expensive AI logic unnecessarily while Daayan is far away.
+Use:
+Update intervals
+Distance-based AI LOD
+Event-driven hearing
+Cached navigation data
+Throttled perception
+Limited raycasts
+Search only when required
+AI must remain smooth on low-end hardware.
+28. FAILURE RECOVERY
+Daayan should recover from unexpected situations.
+If pathfinding fails:
+Recalculate.
+Try alternate target.
+Move to nearest valid waypoint.
+Return to patrol if necessary.
+If player target becomes invalid:
+clear target → SEARCH or PATROL depending on memory.
+If Daayan becomes stuck:
+trigger stuck recovery.
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+1. 
+2. 
+3. 
+4. 
+17
+
+===== PAGE 18 =====
+29. COMPLETE BEHAVIOR FLOW
+Implement the following overall logic:
+PATROL ↓ detect suspicious evidence? → SUSPICIOUS
+hear sound? → INVESTIGATE_SOUND
+see player? → CHASE
+SUSPICIOUS ↓ strong evidence? → INVESTIGATE_SOUND
+see player? → CHASE
+no evidence for timeout? → PATROL
+INVESTIGATE_SOUND ↓ see player? → CHASE
+new stronger sound? → update target
+arrive at sound area → SEARCH
+CHASE ↓ player visible? → continue CHASE
+player very close? → ATTACK
+LOS lost? → SEARCH
+SEARCH ↓ see player? → CHASE
+hear strong sound? → INVESTIGATE_SOUND
+search successful? → SEARCH
+timeout? → RETURN_TO_PATROL
+RETURN_TO_PATROL ↓ go toward patrol network → PATROL
+ATTACK ↓ successful attack? → gameplay-specific result
+target escaped? → SEARCH / RETURN_TO_PATROL
+STUNNED ↓ stun ends → previous appropriate state
+18
+
+===== PAGE 19 =====
+30. IMPORTANT IMPLEMENTATION PRINCIPLE
+Do NOT try to make Daayan omniscient.
+The AI should make decisions using:
+WHAT SHE CAN SEE
++ WHAT SHE CAN HEAR
++ WHAT SHE REMEMBERS
++ WHAT SHE CAN REASONABLY PREDICT
+Nothing more.
+The player must be able to break line of sight, hide, create distractions, manipulate sound, and exploit the
+house layout.
+However, Daayan should be smart enough to investigate intelligently and sometimes anticipate likely player
+movement.
+The desired result is:
+"Daayan feels intelligent."
+NOT:
+"Daayan knows everything."
+31. IMPLEMENTATION ORDER
+Build in this order:
+Navigation
+Patrol
+Vision
+Hearing
+Memory
+FSM
+Chase
+Last-known-position search
+1. 
+2. 
+3. 
+4. 
+5. 
+6. 
+7. 
+8. 
+19
+
+===== PAGE 20 =====
+Search behavior
+Movement smoothing
+Prediction/interception
+Suspicion system
+Difficulty tuning
+Debug tools
+Performance optimization
+Final horror-behavior polish
+After each subsystem, test it independently before adding the next one.
+32. FINAL QUALITY TARGET
+The final Daayan AI should produce behavior where:
+Patrol is believable.
+Sound investigation is meaningful.
+Vision respects walls and FOV.
+Chase continuously adapts to player movement.
+Losing Daayan does not instantly reset the AI.
+Daayan searches intelligently.
+Daayan remembers recent evidence.
+Daayan can occasionally intercept the player.
+Movement and rotation feel organic.
+AI remains performant.
+AI never feels like it is cheating.
+Player can learn and exploit the AI, but cannot trivially predict every action.
+The final goal is a systemic horror AI, not a scripted sequence.
+Build the system modularly so every major parameter can be tuned without rewriting the architecture.
+9. 
+10. 
+11. 
+12. 
+13. 
+14. 
+15. 
+16. 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+20

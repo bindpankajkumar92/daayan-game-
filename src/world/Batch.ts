@@ -22,14 +22,18 @@ import {
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 
 /**
- * Largest edge, in metres, allowed on a batched box's quad — the same number and the same reason as
- * HouseBuilder's SLAB_SEG, which documents it: a triangle big enough to put a vertex on the camera
- * plane loses its 1/w interpolation and its depth comes out metres wrong. Most dressing is well under
- * a metre and subdivides into itself at no cost; it is the few long ones — the 15.6 x 1.1 m hallway
- * runner is the worst — that were drawing the artefact.
+ * Largest edge, in metres, allowed on a batched box's *triangle* — the same number and the same
+ * reason as HouseBuilder's SLAB_SEG, which documents it: a triangle big enough to put a vertex on
+ * the camera plane loses its 1/w interpolation and its depth comes out metres wrong. Most dressing
+ * is well under a metre and subdivides into itself at no cost; it is the few long ones — the
+ * 15.6 x 1.1 m hallway runner is the worst — that were drawing the artefact.
+ *
+ * The sqrt(2) is the quad diagonal: a face grid's quad is two triangles, so bounding the quad's
+ * side at QUAD leaves a 1.41 m edge. The upper-storey re-sweep (2026-09) caught exactly that on
+ * slabs at the old 1 m setting; the helper enforces the promise the comment always made.
  */
 const QUAD = 1;
-const segs = (n: number): number => Math.max(1, Math.ceil(n / QUAD));
+const segs = (n: number): number => Math.max(1, Math.ceil((n * Math.SQRT2) / QUAD));
 
 export class Batch {
   private buckets = new Map<Material, BufferGeometry[]>();

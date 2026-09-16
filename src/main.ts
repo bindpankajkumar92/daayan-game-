@@ -128,7 +128,6 @@ function addScreenFraming(): void {
  */
 function makeErrorSink(): (err: unknown, where: string) => void {
   const seen = new Set<string>();
-  let box: HTMLDivElement | null = null;
 
   return (err, where) => {
     const msg = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
@@ -138,22 +137,7 @@ function makeErrorSink(): (err: unknown, where: string) => void {
     // eslint-disable-next-line no-console
     console.error('[daayan]', line, err instanceof Error ? err.stack : '');
 
-    if (!box) {
-      box = document.createElement('div');
-      box.id = 'error-log';
-      box.style.cssText = `
-        position: fixed; left: 8px; bottom: 8px; max-width: 46vw; z-index: 7600;
-        pointer-events: none; padding: 5px 8px; border-radius: 4px;
-        background: rgba(60,8,8,0.82); border: 1px solid rgba(255,120,120,0.5);
-        font: 500 10px/1.35 ui-monospace, monospace; color: #ffd6d6;
-        white-space: pre-wrap; word-break: break-word;
-      `;
-      document.body.appendChild(box);
-    }
-    const row = document.createElement('div');
-    row.textContent = line;
-    box.appendChild(row);
-    while (box.childElementCount > 4) box.firstElementChild?.remove();
+    // Errors are logged to console without obstructing the player's screen with a red error box
   };
 }
 
@@ -319,12 +303,26 @@ async function main(): Promise<void> {
   await withTimeout(scene.startupReady, STARTUP_ASSET_TIMEOUT_MS);
   hideLoading();
 
-  void withTimeout(scene.allReady, ALL_ASSET_TIMEOUT_MS).then(() => {
-    titleMenu.setReady(true);
-  });
+  // BEGIN lights up only once the art is not just loaded but *warm*: linked shaders and uploaded
+  // textures. Doing it here means the bill is paid against the title screen, which nobody is timing,
+  // instead of against the frame the player first sees a room — which is what used to hitch the cellar
+  // stair twice on the way down. A failure here costs smoothness, never the button, so it is caught.
+  void withTimeout(scene.allReady, ALL_ASSET_TIMEOUT_MS)
+    .then(() => withTimeout(scene.warm(), ALL_ASSET_TIMEOUT_MS).catch((err) => reportError(err, 'warm')))
+    .then(() => {
+      titleMenu.setReady(true);
+    });
 
   // Expose handles on window for the on-device perf gate to inspect.
+  //
+  // Merged into whatever is already there rather than assigned over it, and that is a fix rather than a
+  // style choice. `buildHouseScene` runs at line 186 and adds its own DEV handles — `look`, `where`,
+  // `bar`, `noise` — to this same object; assigning a fresh one here wiped every one of them, so the
+  // probes read as undefined in the console and the placement loop had no way to ask the live page what
+  // it was looking at. Spread first, then the base handles, so the base ones win on a name collision.
+  const existing = (window as unknown as { __daayan?: Record<string, unknown> }).__daayan ?? {};
   (window as unknown as { __daayan: unknown }).__daayan = {
+    ...existing,
     engine,
     debug,
     quality,

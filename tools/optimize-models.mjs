@@ -18,7 +18,7 @@ import { join, basename } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { NodeIO } from '@gltf-transform/core';
 import { ALL_EXTENSIONS } from '@gltf-transform/extensions';
-import { dedup, prune, weld, simplify, resample, meshopt } from '@gltf-transform/functions';
+import { dedup, prune, weld, simplify, resample, meshopt, join as joinPrims } from '@gltf-transform/functions';
 import { MeshoptSimplifier, MeshoptEncoder, MeshoptDecoder } from 'meshoptimizer';
 
 const SRC = 'glb files';
@@ -81,6 +81,25 @@ const PLAN = {
   // Was 0.02/0.05, where the error bound was binding and this decorative cat still came out heavier
   // than the daayan herself (34k tris). Tightening the error is what lets the ratio matter.
   'fred_-_the_cat.glb': { out: 'cat-still.glb', ratio: 0.06, error: 0.03 },
+  // The viewmodel fist, replacing fps_arms.glb's rig. A Revopoint photogrammetry scan: no rig, no
+  // texture, one white material — 24 unskinned primitives, 2.47 M triangles, 1.55 M vertices, raw.
+  // The object on screen in every frame of the game, seen 20-35 cm from the eye, which is why a scan
+  // is worth its triangles where a wall is not: knuckle skin folds and finger gaps are what reads as
+  // a closed hand rather than a mitten at that distance. Even so, 2.47 M is 70x the whole house
+  // budget, so this takes the hardest collapse in the plan — ratio 0.02 of the vertices at an error
+  // bound of 0.005 of the scan's own radius (the scan is 20 cm units, radius ~1.2 dm, so 0.005 keeps
+  // features above half a millimetre). What survives is ~12-15k triangles of fist and forearm,
+  // no normals repair needed (the scan ships NORMAL at the same density), no texture work (pass A
+  // finds no images in the file and moves on), no animations to drop (there are none). It ships as
+  // fist-left.glb: HeldLantern pins it by its measured fist box rather than by bones, since a scan
+  // has none.
+  'revopoint_inspire_-_strike_fist_-_767x203x154.glb': {
+    out: 'fist-left.glb',
+    join: true,
+    ratio: 0.04,
+    error: 0.001,
+    dropAnims: true,
+  },
   'bed_model_002.glb': { out: 'bed.glb', ratio: 0.15, error: 0.015 },
   // The viewmodel arms: 0.35 m from the near plane, never culled, and the object on screen in every
   // single frame of the game. It replaces arms_throwing.glb — the *same* 47-joint Sketchfab rig, bone
@@ -132,11 +151,13 @@ const PLAN = {
   'sun_painting.glb': { out: 'painting-sun.glb' },
   'sus_minecraft_painting.glb': { out: 'painting-sus.glb' },
   // The upper flat's own front door, in the opening at the top of the stair. 590 triangles, so there is
-  // nothing for the simplifier to take.
-  'door.glb': { out: 'door.glb' },
+  // nothing for the simplifier to take — but its frame and leaf are drawn with 2.58 m and 2.37 m edges,
+  // and this is the door the player stands inside the frame of. See subdivide().
+  'door.glb': { out: 'door.glb', split: { placedHeight: 2.56, maxEdge: 1.0 } },
   // The leaf for the doorway carved through the flat's east partition, and the same file again for the
-  // ground floor's bedroom door. 988 triangles across two meshes, so nothing to simplify.
-  'door_inner.glb': { out: 'door-inner.glb' },
+  // ground floor's bedroom door. 988 triangles across two meshes, so nothing to simplify; the 74-triangle
+  // leaf carries 2.15 m edges and is the mesh a player squeezing past an ajar door gets closest to.
+  'door_inner.glb': { out: 'door-inner.glb', split: { placedHeight: 2.15, maxEdge: 1.0 } },
   // The main gate, replacing the procedural one. 59.6k triangles is the most expensive single object in
   // the game and it is a slab with mouldings — the detail is in the maps, not the mesh, which is what
   // made it safe to take an eighth of the vertices where the daayan could only give up her hair. It is
@@ -166,6 +187,52 @@ const PLAN = {
   // HouseScene drives it on puzzle-solve instead of playing it on load.
   'animated_coffin.glb': { out: 'coffin.glb' },
   /**
+   * What is lying in it. Seen only once, from directly above, at the moment the lid swings back — but
+   * seen from a metre away with a lantern held over it, which is the worst distance for a collapsed rib
+   * cage. So a light hand: 0.55 of the vertices at a tight 0.008 bound keeps the ribs and the finger
+   * bones, both of which are thin free-standing loops that a harder collapse welds into paddles.
+   * `dropAnims` because the file's clips are study poses for a figure that is meant to lie still.
+   */
+  'skeleton_pre-cut.glb': { out: 'skeleton.glb', ratio: 0.55, error: 0.008, dropAnims: true },
+  /**
+   * The mother, lying in the hidden room. Same class of subject as `skeleton.glb` above — a thin
+   * free-standing loop of ribs and finger bones that a hard collapse welds into paddles — so it takes
+   * the same light hand. The source is only 2.4 MB across 3 nodes, so this is cheap either way.
+   *
+   * `dropAnims` is not strictly needed (the file ships none) but is stated for the same reason as its
+   * neighbour: a figure meant to lie still should never be driven by a study pose, and a future
+   * re-export of this file that happens to carry one must not silently start moving her.
+   */
+  'female_human_skeleton_-_zbrush_-_anatomy_study.glb': {
+    out: 'skeleton-mother.glb',
+    ratio: 0.55,
+    error: 0.008,
+    dropAnims: true,
+  },
+  /**
+   * The heart necklace, on her neck. Under 10 cm once fitted, but it is the object the player leans in
+   * to take, so it is seen from 30 cm rather than across a room and the chain is the whole of what
+   * identifies it. 554 KB across 6 nodes to begin with, so a gentle bound is enough to matter and
+   * nothing here needs a hero's budget.
+   */
+  'heart_necklace.glb': { out: 'necklace-heart.glb', ratio: 0.6, error: 0.01, dropAnims: true },
+  /**
+   * The room behind the red-locked door. Unlike every other import here this one is a *space* the
+   * player stands inside, so the bound is set by what the walls look like at arm's length rather than
+   * by silhouette at three metres — and it is the largest source in the tree at 17 MB across 192
+   * nodes, which is what a whole building interior costs.
+   *
+   * `dropAnims` because the file's single clip ("Take 01") is a walkthrough the scene never plays: the
+   * player provides the camera. Keeping it would ship dead weight and, worse, leave a clip armed that
+   * nothing holds shut.
+   */
+  'haunted_space_-_abandoned_diplomat_building.glb': {
+    out: 'hidden-room.glb',
+    ratio: 0.3,
+    error: 0.015,
+    dropAnims: true,
+  },
+  /**
    * The wooden floor, and the one entry here that ships an *image* rather than a model — `bake` instead
    * of `out`, handled by pass A2 (tools/bake-floor.mjs) and never reaching the geometry loop.
    *
@@ -186,6 +253,10 @@ const PLAN = {
   'horror_bed.glb': { out: 'bed-horror.glb', ratio: 0.45, error: 0.02 },
   'hospital_bed.glb': { out: 'bed-hospital.glb', ratio: 0.45, error: 0.02 },
   'old_bed.glb': { out: 'bed-old.glb', ratio: 0.45, error: 0.02 },
+  // Painted-wood furniture, same class as the beds and closet — carved detail that survives a 45% quad
+  // collapse at 0.02 tolerance. The cushion uses the same simplify budget; the wood frame keeps enough
+  // silhouette to read as gothic at three metres.
+  'gothic_chair.glb': { out: 'gothic-chair.glb', ratio: 0.45, error: 0.02 },
   // The four touchable noise props: bottles and plates the player can knock. Each is under 30 cm once
   // fitted, so nothing here is silhouette across a room — but they are floor dressing the player walks
   // right up to and taps, which puts them at half a metre from the eye at the moment of interaction, and
@@ -202,6 +273,23 @@ const PLAN = {
   // the graffiti and mortar; keeping a quarter of the scan is still denser than damaged_wall's full
   // 2.2k triangles while avoiding the raw mesh cost on every pass through the corridor.
   'graffiti_wall_mendlak_brno.glb': { out: 'wall-graffiti.glb', ratio: 0.25, error: 0.012 },
+  // Nine distributed furniture / room dressing assets:
+  // Chateau armoire with animated swinging doors and sliding drawer. No simplify: node animations must not be broken.
+  'furniture_chateau_de_la_foret.glb': { out: 'wardrobe-chateau.glb' },
+  // Bedroom vanity with lamp and animated sliding drawer. Pass A flattens its KHR_materials_pbrSpecularGlossiness map.
+  'furniture_for_bedroom.glb': { out: 'dresser-bedroom.glb' },
+  // Summer cafe table and folding chairs for back corridor.
+  'furniture_pack_for_summer_caffe_free.glb': { out: 'caffe-set.glb' },
+  // Bedside cabinet with animated rotating door and sliding drawer.
+  'low_poly_animated_furniture_-_game_ready.glb': { out: 'cabinet-animated.glb' },
+  // Complete kitchen cabinetry suite.
+  'low_poly_kitchen_furniture_-_game_ready.glb': { out: 'kitchen-counter.glb' },
+  // Industrial steel mechanical / workshop table.
+  'mechanical_table.glb': { out: 'table-mechanical.glb' },
+  // Antique round carved pedestal table.
+  'antique_table.glb': { out: 'table-antique.glb' },
+  // High-poly antique iron key model.
+  'key.glb': { out: 'key-iron.glb', ratio: 0.35, error: 0.01 },
 };
 
 /** Triangles across every primitive, so the reduction is reported rather than assumed. */
@@ -218,11 +306,262 @@ function triangles(doc) {
 }
 
 /**
- * Remove morph targets and the animation channels that drive them. These are facial blend shapes on
- * the daayan's head primitives (931 of them, 13 weight channels); the game has no facial animation
- * system and Lambert at lantern range would not show one, so they are data we would compress and
- * upload for nothing. Skeletal animation is untouched.
+ * Bound the longest *triangle* edge of an imported asset, in the metres it will occupy in the game.
+ *
+ * This is the imported half of the 2026-09-04 wedge fix. A triangle with a vertex near the camera
+ * plane has w -> 0, so its 1/w depth interpolation collapses and the fragment's depth lands metres
+ * out: a black wedge that changes shape as the player moves. That pass bounded every *procedural*
+ * triangle to 1 m — Fixtures.boxMesh, Batch.box, HouseBuilder.slabPlane/worldBox, the stair rail — and
+ * measured `posesWithWedge 17 -> 0`. It could not touch imported art, and nothing else here would
+ * either: weld() and simplify() only ever take triangles *away*. So a door leaf still ships as the
+ * two or three big triangles the artist drew it with, and a door is the one piece of architecture the
+ * player routinely stands 20 cm from, looking along it, with the leaf swung towards the eye.
+ *
+ * Measured with tools/glb-edges.mjs, at the heights MODEL_PLACEMENTS actually asks for:
+ *
+ *     door-inner.glb  988 tris   longest edge 2.15 m    48 over 1 m
+ *     door.glb        590 tris   longest edge 2.58 m    92 over 1 m
+ *
+ * `maxEdge` is in world metres and `placedHeight` is the tallest height any placement fits this file
+ * to, since that is the scale at which the bound has to hold; both are per asset because neither is
+ * derivable from the file. Local limit per primitive is therefore
+ * `maxEdge * docHeight / (placedHeight * nodeScale)`.
+ *
+ * Refinement is edge-based rather than per-triangle bisection, which matters: bisecting each triangle
+ * independently until *it* is short enough leaves a T-junction wherever two neighbours stopped at
+ * different depths, and a T-junction is a hairline crack you can see the fog through. Here every edge
+ * that is too long is split in *every* triangle that owns it, at a midpoint keyed by the edge's
+ * quantised endpoints, so both sides of a shared edge get a bit-identical vertex position. Attributes
+ * are still averaged per triangle, so a hard normal or UV seam stays hard.
  */
+function subdivide(doc, cfg) {
+  const maxEdge = cfg.maxEdge ?? 1.0;
+  const placed = cfg.placedHeight;
+  if (!placed) throw new Error('split needs placedHeight');
+
+  // Doc-space height of the whole file, which is what ModelLoader.fitToHeight normalises against.
+  const lo = [Infinity, Infinity, Infinity];
+  const hi = [-Infinity, -Infinity, -Infinity];
+  const nodes = [];
+  for (const scene of doc.getRoot().listScenes()) {
+    const walk = (node) => {
+      const mesh = node.getMesh();
+      const m = node.getWorldMatrix();
+      if (mesh) nodes.push({ mesh, m });
+      for (const child of node.listChildren()) walk(child);
+    };
+    for (const node of scene.listChildren()) walk(node);
+  }
+  const p = [0, 0, 0];
+  for (const { mesh, m } of nodes) {
+    for (const prim of mesh.listPrimitives()) {
+      const pos = prim.getAttribute('POSITION');
+      if (!pos) continue;
+      for (let i = 0; i < pos.getCount(); i++) {
+        pos.getElement(i, p);
+        for (let k = 0; k < 3; k++) {
+          const w = m[k] * p[0] + m[4 + k] * p[1] + m[8 + k] * p[2] + m[12 + k];
+          if (w < lo[k]) lo[k] = w;
+          if (w > hi[k]) hi[k] = w;
+        }
+      }
+    }
+  }
+  const docHeight = hi[1] - lo[1];
+  if (!(docHeight > 0)) throw new Error('split: file has no height');
+
+  let before = 0;
+  let after = 0;
+  for (const { mesh, m } of nodes) {
+    // Largest column norm of the upper-left 3x3: the factor by which this node stretches a local
+    // length. Exact for the rigid-plus-uniform-scale transforms these files carry.
+    const nodeScale = Math.max(
+      Math.hypot(m[0], m[1], m[2]),
+      Math.hypot(m[4], m[5], m[6]),
+      Math.hypot(m[8], m[9], m[10]),
+    );
+    const limit = (maxEdge * docHeight) / (placed * Math.max(nodeScale, 1e-9));
+    for (const prim of mesh.listPrimitives()) {
+      const grew = refinePrimitive(doc, prim, limit);
+      before += grew.before;
+      after += grew.after;
+    }
+  }
+  return { before, after, docHeight };
+}
+
+/** glTF element counts to accessor type names. */
+const ACCESSOR_TYPE = { 1: 'SCALAR', 2: 'VEC2', 3: 'VEC3', 4: 'VEC4' };
+
+/**
+ * Split every edge of one primitive that is longer than `limit`, repeatedly, until none is.
+ *
+ * Skipped rather than half-done when the data is something this cannot rewrite faithfully: a
+ * non-TRIANGLES mode, a skinned or morphed primitive, or a quantised attribute whose integer
+ * component type would be destroyed by writing floats through it. Each of those prints, because a
+ * silent skip here is a bound that looks enforced and is not.
+ */
+function refinePrimitive(doc, prim, limit) {
+  const none = { before: 0, after: 0 };
+  const pos = prim.getAttribute('POSITION');
+  if (!pos) return none;
+  if (prim.getMode() !== 4) {
+    console.error(`  ! split skipped: primitive mode ${prim.getMode()} is not TRIANGLES`);
+    return none;
+  }
+  if (prim.listTargets().length > 0 || prim.getAttribute('JOINTS_0')) {
+    console.error('  ! split skipped: skinned or morphed primitive');
+    return none;
+  }
+  const sems = prim.listSemantics();
+  const src = sems.map((s) => prim.getAttribute(s));
+  const FLOAT = 5126;
+  const odd = sems.filter((s, k) => src[k].getComponentType() !== FLOAT);
+  if (odd.length > 0) {
+    console.error(`  ! split skipped: non-float attribute(s) ${odd.join(' ')}`);
+    return none;
+  }
+  const dims = src.map((a) => a.getElementSize());
+  const posK = sems.indexOf('POSITION');
+  // TANGENT's 4th component is a handedness sign, not a quantity: averaging +1 and -1 gives 0, and a
+  // zero w means a zero bitangent, which kills normal mapping on every triangle touching that vertex.
+  // Both ends of a real shared edge normally agree, but door.glb has two edges that straddle a
+  // handedness flip, and its normal map is the one doing visible work on the geometry the player
+  // presses their face against. Carry the sign from an endpoint instead of blending it.
+  const signK = sems.indexOf('TANGENT');
+
+  // One flat array per attribute, addressed by vertex index. Originals are kept and midpoints are
+  // appended, so existing indices stay valid across passes.
+  const data = src.map((a, k) => {
+    const d = dims[k];
+    const out = new Array(a.getCount() * d);
+    const tmp = new Array(d);
+    for (let i = 0; i < a.getCount(); i++) {
+      a.getElement(i, tmp);
+      for (let c = 0; c < d; c++) out[i * d + c] = tmp[c];
+    }
+    return out;
+  });
+  let count = pos.getCount();
+
+  const idxAcc = prim.getIndices();
+  const n = idxAcc ? idxAcc.getCount() : pos.getCount();
+  let tris = [];
+  for (let i = 0; i + 2 < n; i += 3) {
+    tris.push(
+      idxAcc
+        ? [idxAcc.getScalar(i), idxAcc.getScalar(i + 1), idxAcc.getScalar(i + 2)]
+        : [i, i + 1, i + 2],
+    );
+  }
+  const before = tris.length;
+
+  const P = data[posK];
+  const lenOf = (a, b) =>
+    Math.hypot(P[a * 3] - P[b * 3], P[a * 3 + 1] - P[b * 3 + 1], P[a * 3 + 2] - P[b * 3 + 2]);
+  /**
+   * An edge's identity, by quantised endpoint positions rather than vertex indices. Two triangles
+   * that meet along a hard normal or UV seam do not share indices there, only coordinates, and if the
+   * seam's two sides disagreed about whether the edge is long one of them would not split and the
+   * crack would open exactly along the seam.
+   */
+  const key = (a, b) => {
+    const q = (i) =>
+      `${Math.round(P[i * 3] * 1e5)},${Math.round(P[i * 3 + 1] * 1e5)},${Math.round(P[i * 3 + 2] * 1e5)}`;
+    const ka = q(a);
+    const kb = q(b);
+    return ka < kb ? `${ka}|${kb}` : `${kb}|${ka}`;
+  };
+
+  // Passes, not recursion: each pass halves every over-long edge, and the medians it creates are
+  // measured again on the next one. 8 is 256x on a side and no asset here needs two.
+  for (let pass = 0; pass < 8; pass++) {
+    const long = new Set();
+    for (const t of tris) {
+      for (let e = 0; e < 3; e++) {
+        const a = t[e];
+        const b = t[(e + 1) % 3];
+        if (lenOf(a, b) > limit) long.add(key(a, b));
+      }
+    }
+    if (long.size === 0) break;
+
+    const midCache = new Map();
+    const midOf = (a, b) => {
+      const kk = key(a, b);
+      const hit = midCache.get(kk);
+      if (hit !== undefined) return hit;
+      for (let k = 0; k < data.length; k++) {
+        const d = dims[k];
+        for (let c = 0; c < d; c++) {
+          const av = data[k][a * d + c];
+          const bv = data[k][b * d + c];
+          data[k].push(k === signK && c === 3 ? av : (av + bv) * 0.5);
+        }
+      }
+      midCache.set(kk, count);
+      return count++;
+    };
+
+    const next = [];
+    for (const t of tris) {
+      const marked = [0, 1, 2].map((e) => long.has(key(t[e], t[(e + 1) % 3])));
+      const cnt = marked.reduce((s, m) => s + (m ? 1 : 0), 0);
+      if (cnt === 0) {
+        next.push(t);
+      } else if (cnt === 3) {
+        const [v0, v1, v2] = t;
+        const m01 = midOf(v0, v1);
+        const m12 = midOf(v1, v2);
+        const m20 = midOf(v2, v0);
+        next.push([v0, m01, m20], [m01, v1, m12], [m20, m12, v2], [m01, m12, m20]);
+      } else if (cnt === 1) {
+        // Relabel so the one long edge is v0-v1.
+        const e = marked.indexOf(true);
+        const v0 = t[e];
+        const v1 = t[(e + 1) % 3];
+        const v2 = t[(e + 2) % 3];
+        const m = midOf(v0, v1);
+        next.push([v0, m, v2], [m, v1, v2]);
+      } else {
+        // Relabel so the one *short* edge is v0-v1; the other two are split.
+        const u = marked.indexOf(false);
+        const v0 = t[u];
+        const v1 = t[(u + 1) % 3];
+        const v2 = t[(u + 2) % 3];
+        const m12 = midOf(v1, v2);
+        const m20 = midOf(v2, v0);
+        next.push([v0, v1, m12], [v0, m12, m20], [m12, v2, m20]);
+      }
+    }
+    tris = next;
+  }
+
+  const after = tris.length;
+  if (after === before) return { before, after };
+
+  const buffer = doc.getRoot().listBuffers()[0];
+  for (let k = 0; k < sems.length; k++) {
+    const d = dims[k];
+    prim.setAttribute(
+      sems[k],
+      doc
+        .createAccessor(sems[k])
+        .setType(ACCESSOR_TYPE[d])
+        .setArray(new Float32Array(data[k]))
+        .setBuffer(buffer),
+    );
+  }
+  const flat = new Uint32Array(after * 3);
+  for (let i = 0; i < after; i++) {
+    flat[i * 3] = tris[i][0];
+    flat[i * 3 + 1] = tris[i][1];
+    flat[i * 3 + 2] = tris[i][2];
+  }
+  prim.setIndices(doc.createAccessor().setType('SCALAR').setArray(flat).setBuffer(buffer));
+  return { before, after };
+}
+
 function dropMorphTargets(doc) {
   let dropped = 0;
   for (const mesh of doc.getRoot().listMeshes()) {
@@ -394,9 +733,9 @@ async function main() {
     const doc = await io.read(join(TMP, name));
     const trisBefore = triangles(doc);
 
-    if (cfg.dropMorphs) dropMorphTargets(doc);
-    if (cfg.dropAnims) dropAnimations(doc);
-    const steps = [dedup(), prune({ keepAttributes: false, keepIndices: false })];
+    const steps = [];
+    if (cfg.join) steps.push(joinPrims({ keepNamed: false }));
+    steps.push(dedup(), prune({ keepAttributes: false, keepIndices: false }));
     if (cfg.ratio) {
       // weld first: the simplifier collapses shared vertices, and an unwelded export has none.
       // Card thinning also needs welded indices, or every triangle looks like its own strand.
@@ -404,6 +743,10 @@ async function main() {
       if (cfg.cards) steps.push((d) => void thinCardHair(d, cfg.cards));
       steps.push(simplify({ simplifier: MeshoptSimplifier, ratio: cfg.ratio, error: cfg.error ?? 0.01 }));
     }
+    // After any simplification, because the simplifier would take straight back out what this puts in,
+    // and before resample/prune/meshopt, which are the encoders.
+    let split = null;
+    if (cfg.split) steps.push((d) => void (split = subdivide(d, cfg.split)));
     steps.push(resample(), prune(), meshopt({ encoder: MeshoptEncoder, level: 'high' }));
     await doc.transform(...steps);
     await io.write(join(DST, cfg.out), doc);
@@ -414,6 +757,7 @@ async function main() {
       MB: `${(rawBytes / 1048576).toFixed(1)} -> ${(outBytes / 1048576).toFixed(2)}`,
       cut: `${Math.round((1 - outBytes / rawBytes) * 100)}%`,
       tris: `${trisBefore} -> ${triangles(doc)}`,
+      split: split ? `${split.before} -> ${split.after} @${cfg.split.maxEdge}m` : '',
     });
   }
 

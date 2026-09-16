@@ -242,8 +242,10 @@ function bedroom({ b, m, aabbs, at }: Ctx): void {
    * the spawn mattress the player wakes on is the imported bed's.
    *
    * The wardrobe was a 0.62 x 2.05 x 1.5 box with two doors at (-1.45, 6.6), against the east wall.
-   * closet-old.glb is the wardrobe in this room now, at (-2.0, 9.75) — so the hiding pocket the box was
-   * registered for in HouseScene survives as that model's, which Hiding picks up through WARDROBE_NAMES.
+   * closet-old.glb replaced it and has since left the room altogether, for the store room at (4.4, 16.65)
+   * — the hiding pocket the box was registered for in HouseScene survives as that model's, which Hiding
+   * picks up through WARDROBE_NAMES wherever it stands. What this room keeps is bed.glb, itself an
+   * under-bed spot; it is no longer the house's whole supply of them.
    */
 
   // Bedside table: the diary page, and a candle burned down to nothing.
@@ -377,7 +379,9 @@ function living({ b, m, at }: Ctx): void {
 
 /** The stair down. A handrail, because a 3 m drop with no rail reads as a hole, not a stair. */
 function shaft({ b, m }: Ctx): void {
-  const rail = new BoxGeometry(5.0, 0.05, 0.05);
+  // 5 m of rail is the house's longest bare edge; Batch.add merges as-is, so the triangle bound has
+  // to be applied here — the same SLAB_SEG reason as everywhere else, sqrt(2) for the quad diagonal.
+  const rail = new BoxGeometry(5.0, 0.05, 0.05, 8, 1, 1);
   rail.rotateZ(0.6435);
   rail.translate(-11.7, -0.65, 2.34);
   b.add(m.wood, rail);

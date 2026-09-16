@@ -75,6 +75,27 @@ const HINGLISH = new Map<string, string>([
   ['A bolt shifts, further along the wall.', 'Deewar ke aage kahin ek chatakni sarki.'],
   ['Cold air. There is a doorway behind it.', 'Thandi hawa. Peeche ek darwaza hai.'],
 
+  // --- Doors, which can be shut again as well as opened ---
+  // Both the flat's front door and the leaf into its corridor are two-way, so each needs both verbs.
+  ['Open the door', 'Darwaza kholo'],
+  ['Close the door', 'Darwaza band karo'],
+  ['Push the door open', 'Darwaza dhakka dekar kholo'],
+  ['The door gives, and the flat exhales.', 'Darwaza maan gaya, aur flat ne saans chhodi.'],
+  ['You pull the door shut behind you.', 'Tum darwaza apne peeche band kar lete ho.'],
+  ['The door swings back, and the rest of the flat opens up.', 'Darwaza peeche khulta hai, aur baaki flat khul jata hai.'],
+  ['You swing it shut, and the corridor clears.', 'Tum use band karte ho, aur galli saaf ho jati hai.'],
+
+  // --- The red lock, the hidden room, and what is in it ---
+  ['Locked', 'Band hai'],
+  ['Turn the red key', 'Laal chaabi ghumao'],
+  ['Lift the pillow', 'Takiya uthao'],
+  ['Take the red key', 'Laal chaabi lo'],
+  ['Under the pillow, flat on the sheet: a red key.', 'Takiye ke neeche, chadar par seedhi padi: ek laal chaabi.'],
+  ['You take the red key.', 'Tum laal chaabi utha lete ho.'],
+  ['The key turns, and the wall opens where there was no door.', 'Chaabi ghoomti hai, aur jahan darwaza hi nahi tha wahan deewar khul jati hai.'],
+  ["Read your father's book", 'Apne baap ki kitaab padho'],
+  ['A brass key, under the book.', 'Kitaab ke neeche, ek peetal ki chaabi.'],
+
   // --- Puzzle overlays ---
   ['Four digits.', 'Chaar ank daalo.'],
   ['The dial does not turn.', 'Dial nahi ghoomta.'],
@@ -95,6 +116,15 @@ const HINGLISH = new Map<string, string>([
   ['The cold is real, and the fog is real, and the road is somewhere ahead of you in it.', 'Thand asli hai, dhund asli hai, aur raasta isi mein kahin aage hai.'],
   ['Behind you the house has gone quiet. The twelfth nail is still empty.', 'Tumhare peeche ghar chup ho gaya hai. Baarahvi keel ab bhi khaali hai.'],
   ['Walk', 'CHALO'],
+
+  // --- Being caught ---
+  ['She has you', 'Usne tumhe pakad liya'],
+  ['Her hand closes on your wrist and the house goes quiet.', 'Uska haath tumhari kalai par bandh ho jata hai aur ghar chup ho jata hai.'],
+  ['Try again', 'Phir se koshish karo'],
+  ['You wake on the bed, and the house has shifted.', 'Tum bistar par jaagte ho, aur ghar badal chuka hai.'],
+  ['The house keeps you', 'Ghar tumhe rakh leta hai'],
+  ['There is nothing left to wake into.', 'Ab jaagne ke liye kuch bacha hi nahi.'],
+  ['Begin again', 'Naye sire se shuru karo'],
 
   // --- Interaction prompts (Clues.ts) ---
   ['Read the pinned note', 'Chipki hui parchi padho'],

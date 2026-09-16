@@ -173,7 +173,7 @@ export function buildFeasibilityScene(
   scene.add(new HemisphereLight(0x3d4a68, 0x2b2119, 0.38));
 
   const lantern = new PointLight(0xffc27a, 2.2, 16, 1.5);
-  lantern.position.set(0.25, -0.15, 0.1); // slightly right and below the eye, like a held lamp
+  lantern.position.set(-0.25, -0.15, 0.1); // slightly left and below the eye, like a held lamp
   engine.camera.add(lantern);
   scene.add(engine.camera);
   // The LANTERN button is gone from TouchControls, so there is nothing left to toggle here either.

@@ -408,4 +408,37 @@ export const CLUES: Record<string, ClueSpec> = {
       ],
     },
   },
+
+  /**
+   * The father's book, and the four things it answers.
+   *
+   * It is the only place in the game where the story is *told* rather than inferred, so it is the one
+   * document that has to carry weight rather than atmosphere — and the reason it is a book in a locked
+   * room rather than a note in a drawer is that the player has to want it before they get it. Everything
+   * before this is the house describing itself; this is someone describing them.
+   *
+   * The order is the order the questions arrive in: who you are, why she wants you, what happened to
+   * your mother, what to do about it. The mother's paragraph is deliberately not the longest — it is
+   * the only one written in the first person about something he did, and it lands harder short. The
+   * last line hands over the first gate key, which is the other thing in the wardrobe with it.
+   */
+  'hidden.book': {
+    prompt: "Read your father's book",
+    raises: 'TERRIFYING',
+    firstToast: 'He wrote it for you. He knew you would come back here.',
+    doc: {
+      title: "Your father's book",
+      sub: 'The hidden room — in the wardrobe, wrapped in oilcloth',
+      style: 'diary',
+      lines: [
+        'If you are reading this, then the saint was right and everything I did to keep you out of this house was for nothing. So I will start with the thing I should have told you years ago and did not, because I was a coward, and because I wanted you to have a mother who died ordinarily.',
+        'You are not her son. You are mine and your mother\u2019s, and you were born in the same minute her boy died. I have never known whether that was the saint\u2019s doing or hers. She has always known exactly whose doing it was.',
+        'She has kept him in a box in the black room for twenty years and she has been trying to bring him back the whole time. What she is doing does not want grief. It wants the death of a man of the same blood. Her husband is gone. Her son is already dead. That leaves you, it has always left you, and it is why the door was open for you that night.',
+        'I told you a fire took your mother. There was no fire. She died at the top of the stairs with her arms round you and she did not let go, and that is the entire reason you are alive to read this. I could carry one of you. I carried you. I have not had a day since that I did not hear it.',
+        'I brought her here. It was the one door in this house that woman could not open, and it was the best I could do for her. Then I wrote this and I left, because I thought I could still stop it, and I did not come back.',
+        'Go down to the black room. Open the box. Put the lamp oil in it and burn it. Not to hurt him \u2014 he is not the thing in this house that wants you, he never was. Burn it so that he can go, because while he is in that box she will never stop.',
+        'And take the key. It is here in the wardrobe with this book. It is one of the three that hold the gate.',
+      ],
+    },
+  },
 };

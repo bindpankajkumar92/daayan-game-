@@ -47,4 +47,22 @@ device-shot.png
 # sort out of the way; several also import `sharp`, which is not a dependency, so they would not run
 # from a fresh clone anyway.
 tools/.*.mjs
+# Bundle output from `npm run check:ai` — regenerated on every run, never worth committing.
+tools/.tmp/
 .tmp-img*.webp
+
+# Stale build output kept aside by the safe-delete shim during a rebuild.
+.dist-old-verify/
+.vid2/
+.dist-old-verify2/
+.dist-old-verify3/
+.dist-old-verify4/
+.dist-old-verify5/
+.dist-old-verify6/
+.dist-old-verify7/
+.dist-old-verify8/
+.look/
+.chromeprof/
+.dist-old-v9/
+.dist-old-v10/
+.dist-old-v11/

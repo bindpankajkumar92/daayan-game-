@@ -34,6 +34,17 @@ const STRIDE = { walk: 0.85, run: 1.15, crouch: 0.7 };
 /** How loud each gait is, in metres the daayan can hear it from. Also drives the playback volume. */
 const LOUDNESS = { walk: 2.5, run: 4.0, crouch: 1.0 };
 
+/**
+ * How long a sprint survives without covering ground, in seconds.
+ *
+ * A sprinting player in a small room is repeatedly blocked for a frame or two by a wall or a corner.
+ * Those frames carry no displacement, and treating them as "stopped" made the noise bar impossible to
+ * fill — see the note at the gait decision in `move`. This is the memory that rides them out, and it
+ * is deliberately the same order of magnitude as `NoiseSystem.DECAY_GRACE`, because the two are
+ * answering the same question from opposite ends: neither will punish a brief interruption.
+ */
+const RUN_MEMORY = 0.3;
+
 export interface AABB {
   minX: number;
   minY: number;
@@ -74,6 +85,13 @@ export class FPController {
   private onGround = true;
   private crouching = false;
   private running = false;
+  private actuallyRunning = false;
+
+  /**
+   * Seconds of run-gait credit left, refreshed whenever the player actually covers ground.
+   * See `RUN_MEMORY` — this is what lets a sprint survive bumping into a wall.
+   */
+  private runMemory = 0;
   /**
    * A hiding place owns the camera position while this is true. This is stronger than zero movement:
    * zero input still applies gravity and ground snap, which would pull a camera placed under a bed or
@@ -161,6 +179,11 @@ export class FPController {
   setCrouch(v: boolean): void {
     if (this.crouching === v) return;
     this.crouching = v;
+    // Crouching is a deliberate change of gait, so a run's credit does not survive it.
+    if (v) {
+      this.actuallyRunning = false;
+      this.runMemory = 0;
+    }
     // Re-seat the eye on the current floor rather than assuming the floor is y=0.
     if (this.onGround) this.position.y = this.groundY + this.currentEyeHeight();
     this.syncCamera();
@@ -168,13 +191,29 @@ export class FPController {
 
   setRun(v: boolean): void {
     this.running = v;
+    // Releasing the control, crouching, or losing the floor is a decision, not a blocked frame, so
+    // the gait credit goes with them rather than lingering.
+    if (!v) {
+      this.actuallyRunning = false;
+      this.runMemory = 0;
+    }
   }
 
   isCrouching(): boolean {
     return this.crouching;
   }
 
+  /**
+   * True only when the player is actively sprinting across the floor
+   * (run button held + movement input + physically displaced + on ground + not crouching).
+   * Standing still while holding the run button does NOT count as running.
+   */
   isRunning(): boolean {
+    return this.actuallyRunning;
+  }
+
+  /** Raw run button/key toggle state. */
+  isRunIntent(): boolean {
     return this.running;
   }
 
@@ -196,6 +235,8 @@ export class FPController {
     if (locked) {
       this.velocity.set(0, 0, 0);
       this.running = false;
+      this.actuallyRunning = false;
+      this.runMemory = 0;
       this.stepPhase = 1;
     }
   }
@@ -207,6 +248,8 @@ export class FPController {
   /** Move relative to current facing. x = strafe (+right), y = forward (+forward). */
   move(strafe: number, forward: number, dt: number): void {
     if (this.movementLocked) {
+      this.actuallyRunning = false;
+      this.runMemory = 0;
       // Camera still follows look() / addLookDelta(). No gravity, collision or footstep while hidden.
       this.syncCamera();
       return;
@@ -251,6 +294,32 @@ export class FPController {
     // method is called with zeroes behind an open overlay and gravity alone can move `position`.
     const wants = Math.hypot(strafe, forward) > 0.01;
     const moved = Math.hypot(this.position.x - x0, this.position.z - z0);
+
+    // --- Is the player *sprinting*, for the purpose of making noise? ---
+    //
+    // This used to require `moved > 0.001` on the current frame, and that was the bug the player
+    // filmed: the bar would climb toward full, stall, and she never came. The game is set in a
+    // house of small rooms, so a sprinting player is *constantly* brushing a wall or rounding a
+    // corner. `moveAxis` slides per-axis and rejects an axis outright on contact, so `moved` collapses
+    // to ~0 on exactly those frames — and every one of them counted as "not running", which the
+    // noise system then billed as decay. Measured in a 3 m room: 1.4% of frames registered as
+    // running, so the bar could not fill at all.
+    //
+    // The mistake was asking a *displacement* question to answer an *intent* question. Whether a wall
+    // blocked two centimetres of this frame's slide is not a decision the player made; holding the
+    // run control into a corner is. So the gait is decided by intent (`wants`) plus the physical
+    // preconditions (on ground, not crouching), and `moved` is demoted to what it is actually good
+    // for: gating the *footstep* below, because a player pressed against a wall should not keep
+    // playing footsteps.
+    //
+    // `hasMovedRecently` is a short memory rather than a per-frame test, so a single blocked frame
+    // cannot flip the gait. It is the same shape of fix, for the same reason, as `DECAY_GRACE` in
+    // `NoiseSystem`: one dropped frame must not undo a second of effort.
+    if (moved > 0.001) this.runMemory = RUN_MEMORY;
+    else this.runMemory = Math.max(0, this.runMemory - dt);
+
+    this.actuallyRunning =
+      this.running && !this.crouching && this.onGround && wants && this.runMemory > 0;
     if (this.onGround && wants && moved > 1e-5) {
       const stride = this.crouching ? STRIDE.crouch : this.running ? STRIDE.run : STRIDE.walk;
       this.stepPhase += moved / stride;
@@ -385,9 +454,15 @@ export class FPController {
   warpTo(pos: Vector3, yaw?: number): void {
     this.position.copy(pos);
     this.velocity.set(0, 0, 0);
+    this.actuallyRunning = false;
+    this.runMemory = 0;
     this.onGround = true;
     this.groundY = this.groundYAt(pos.x, pos.z);
     if (yaw !== undefined) this.facing.y = yaw;
     this.syncCamera();
+  }
+
+  getPosition(): Vector3 {
+    return this.position;
   }
 }

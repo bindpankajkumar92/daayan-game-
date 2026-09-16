@@ -21,13 +21,14 @@
  * as the frustum is concerned.
  */
 
-import { Box3, Group, Mesh, Vector3, type AnimationClip, type AnimationMixer, type Camera, type MeshBasicMaterial, type MeshLambertMaterial, type Object3D, type Scene } from 'three';
+import { Box3, Group, Mesh, Vector3, type AnimationClip, type AnimationMixer, type Camera, type MeshBasicMaterial, type MeshLambertMaterial, type Object3D, type Scene, type Texture, type WebGLRenderer } from 'three';
 import { BASE_Y, HALF_T, WALL_H, expandRun, type Segment, type WallRun } from '@/world/HouseLayout';
-import { BEDROOM, BEDROOM_DOOR, GATE, HALL_WALLS, LIVING_DOOR, RITUAL_DOOR, ROOMS, UPPER, UPPER_DOOR, UPPER_INNER, UPPER_INNER_CUT, UP_Y } from '@/world/HouseRooms';
+import { BACK_DOOR_E, BACK_DOOR_W, BEDROOM, BEDROOM_DOOR, CELLAR_DOOR, GATE, HALLWAY, HALL_WALLS, KITCHEN_DOOR, LIVING, LIVING_DOOR, POOJA_DOOR, RITUAL_DOOR, ROOMS, STAIR_DOOR, STORE_DOOR, UPPER, UPPER_DOOR, UPPER_INNER, UPPER_INNER_CUT, UP_HIDDEN_CUT, UP_HIDDEN_DOOR, UP_Y } from '@/world/HouseRooms';
 import type { AABB } from '@/player/FPController';
-import { aabbOf } from '@/world/Fixtures';
+import { aabbOf, leafBoxes } from '@/world/Fixtures';
 import { fitToBox, fitToHeight, playClip, type ModelLoader } from '@/world/ModelLoader';
 import { carveBoxes, type CarveBox } from '@/world/CarveBox';
+import { WALL_TILE, worldUv } from '@/world/HouseBuilder';
 import { SHADOW_LIFT, SHADOW_SPREAD, shadowUnitQuad } from '@/world/ContactShadow';
 
 export interface ModelPlacement {
@@ -51,6 +52,13 @@ export interface ModelPlacement {
    * skeleton, so the skinned files — the daayan, the cats — must never take this path. clone(true)
    * shares geometry and materials, so a copy costs no GPU memory; it also means `albedo` must match
    * the row it is copied from, since brighten() dedups on the material it lands on.
+   *
+   * A copy also inherits rotation, and inherits it silently. Both apply steps read `if (p.yaw !==
+   * undefined)`, so an omitted yaw does not mean zero, it means keep — and what is kept is whatever the
+   * cached Group is already carrying. A clone only ever rotates its own copy, so the Group can only have
+   * been turned by a row for the same file that has no `clone` and is placed earlier in this array. That
+   * makes the hazard exactly one shape: a source row with a yaw, then a copy without one. Only
+   * painting-sus.glb has it, and painting-sus-store therefore states `yaw: 0` rather than leaving it off.
    */
   clone?: boolean;
   /** Metres the longest axis should measure once placed. Ignored when `fit` is present. */
@@ -71,10 +79,40 @@ export interface ModelPlacement {
   y?: number;
   /** Radians about y, applied before measuring so a collider matches the turned footprint. */
   yaw?: number;
+  /**
+   * Radians about x, applied with `yaw` and before measuring, for the one thing yaw cannot do: lay a
+   * model down. Every other asset in this file arrives standing the way it should stand, so this is a
+   * single-purpose field — the skeleton is authored upright and has to go into the coffin on its back.
+   *
+   * It changes what `height` means, because fitToHeight() measures the box *after* the caller's
+   * rotation and scales by whatever the longest axis then is. A -pi/2 pitch lays a figure's height
+   * along world z, so `height` still reads as its head-to-heel length; it is the model's own depth
+   * that becomes the vertical, and the y a row is given seats the lowest part of that.
+   */
+  pitch?: number;
   /** Stand on top of an earlier entry's box rather than on the floor. */
   on?: string;
   /** Block the player. Furniture yes; characters and small dressing no. */
   collide?: boolean;
+  /**
+   * Trace this row's door leaf with this many boxes and stop drawing the row while the eye is inside
+   * them. See leafBoxes, which holds the measurements and the reason one box is not enough.
+   *
+   * A collider was the first attempt, and it cannot work on a leaf standing ajar in a 0.9 m opening.
+   * The eye needs 0.10 m of clearance — the near plane, no more — but a body needs 0.70 m of channel
+   * to get past anything solid, and the leaf does not leave that. Measured: keep-outs on these twelve
+   * rows walled off 50.1 m2 of the house, including the kitchen and the store entire, 21.2 m2 each,
+   * because the way through those two doorways was always *through* the ajar leaf — which is the
+   * policy the note at door-bedroom sets out. Not drawing it costs no floor at all, and drawing is the
+   * only thing that has to stop: a triangle that is never submitted cannot straddle the near plane.
+   *
+   * Only for rows whose geometry is *all* leaf. `door-inner.glb` is two slab meshes and nothing else,
+   * and the two `door.glb` clones down here drop their frame, so all twelve are safe. A row that keeps
+   * its frame must not use this — the frame is the part standing in the wall, and hiding it opens a
+   * hole over the doorway. The two doors that swing are armed instead, and those do carry keep-outs:
+   * opening one takes its leaf out of the walk path, so the 0.70 m is there to spend.
+   */
+  leaf?: number;
   /**
    * Delete these subtrees before anything is measured. Prefixes of node names.
    *
@@ -331,6 +369,11 @@ const PANEL_FACE_LIFT = 0.01;
  * wallColliders drops any run under WALL_MIN_RUN entirely, so `collide` on a wall with a short corner
  * stub beside a doorway would leave that stub with no collider at all and let the player walk through
  * it. Facings are the safe default; `collide` is for runs measured and known to be long.
+ *
+ * `minEyeY` passes straight through to the row's storey cull. It matters for a room on the upper floor:
+ * the distance cull's 20 m radius reaches from the hallway to the flat, so without it the whole upper
+ * wing's facings are submitted every frame the player spends downstairs, hidden behind a floor the
+ * renderer knows nothing about.
  */
 function wallPanels(
   prefix: string,
@@ -340,7 +383,7 @@ function wallPanels(
   yaw: number,
   floorY: number,
   ceilY: number,
-  opts: { first?: boolean; collide?: boolean } = {},
+  opts: { first?: boolean; collide?: boolean; minEyeY?: number } = {},
 ): ModelPlacement[] {
   const alongX = Math.abs(run.x2 - run.x1) > Math.abs(run.z2 - run.z1);
   const runA0 = alongX ? Math.min(run.x1, run.x2) : Math.min(run.z1, run.z2);
@@ -362,6 +405,7 @@ function wallPanels(
       yaw, albedo: 1.6,
     };
     if (opts.first === true) row.first = true;
+    if (opts.minEyeY !== undefined) row.minEyeY = opts.minEyeY;
     if (opts.collide === true) row.walls = { y0: sliceInset, y1: height - sliceInset, top: height };
     return row;
   });
@@ -379,7 +423,7 @@ function wallPanels(
  * `collideOnly` runs are skipped. Those exist exactly where an imported model already draws the wall,
  * and facing them would put two walls in the same place.
  */
-function roomWallPanels(roomId: string, opts: { first?: boolean; collide?: boolean } = {}): ModelPlacement[] {
+function roomWallPanels(roomId: string, opts: { first?: boolean; collide?: boolean; minEyeY?: number } = {}): ModelPlacement[] {
   const room = ROOMS.find((r) => r.id === roomId);
   if (room === undefined) return [];
   const cx = (room.floor.x0 + room.floor.x1) / 2;
@@ -460,6 +504,30 @@ const BEDROOM_SOUTH_WALL_PANELS: ModelPlacement[] = wallPanels(
   { first: true },
 );
 const LIVING_WALL_PANELS: ModelPlacement[] = roomWallPanels('living');
+const LIVING_SOUTH_WALL_PANELS: ModelPlacement[] = wallPanels(
+  'living-wall-south',
+  {
+    x1: LIVING.x0, z1: LIVING.z0, x2: LIVING.x1, z2: LIVING.z0,
+    openings: [{ at: LIVING_DOOR.x, half: LIVING_DOOR.half, y1: LIVING_DOOR.top }],
+  },
+  0, 1, 0, 0, WALL_H,
+);
+const LIVING_WEST_WALL_PANELS: ModelPlacement[] = wallPanels(
+  'living-wall-west',
+  {
+    x1: LIVING.x0, z1: LIVING.z0, x2: LIVING.x0, z2: LIVING.z1,
+  },
+  1, 0, Math.PI / 2, 0, WALL_H,
+);
+
+const HALLWAY_EXTENDED_PANELS: ModelPlacement[] = [
+  { name: 'wall-damaged.glb', id: 'hallway-wall-south-arch-header', clone: true, height: 0.59, fit: { width: 3.1, height: 0.59, depth: 0.1 }, x: 0, y: 2.405, z: 0.11, albedo: 1.6 },
+  { name: 'wall-damaged.glb', id: 'hallway-wall-north-bed-header', clone: true, height: 0.89, fit: { width: 1.5, height: 0.89, depth: 0.1 }, x: -5.0, y: 2.105, z: 2.49, albedo: 1.6 },
+  { name: 'wall-damaged.glb', id: 'hallway-wall-north-living-header', clone: true, height: 0.89, fit: { width: 1.5, height: 0.89, depth: 0.1 }, x: 5.0, y: 2.105, z: 2.49, albedo: 1.6 },
+  ...wallPanels('hallway-wall-west', { x1: HALLWAY.x0, z1: HALLWAY.z0, x2: HALLWAY.x0, z2: HALLWAY.z1, openings: [{ at: CELLAR_DOOR.z, half: CELLAR_DOOR.half, y1: CELLAR_DOOR.top }] }, 1, 0, Math.PI / 2, 0, WALL_H),
+  ...wallPanels('hallway-wall-east', { x1: HALLWAY.x1, z1: HALLWAY.z0, x2: HALLWAY.x1, z2: HALLWAY.z1, openings: [{ at: STAIR_DOOR.z, half: STAIR_DOOR.half, y1: STAIR_DOOR.top }] }, -1, 0, -Math.PI / 2, 0, WALL_H),
+];
+
 const BASEMENT_WALL_PANELS: ModelPlacement[] = roomWallPanels('basement');
 
 /**
@@ -480,16 +548,81 @@ const SHAFT_WALL_PANELS: ModelPlacement[] = roomWallPanels('shaft');
 const RITUAL_WALL_PANELS: ModelPlacement[] = roomWallPanels('ritual');
 const UPSHAFT_WALL_PANELS: ModelPlacement[] = roomWallPanels('upshaft');
 
+/**
+ * The two new wings — the ground floor's rear corridor with its three rooms, and the upper storey's own
+ * three rooms south of the imported flat.
+ *
+ * Nothing here is hand-written, which is the point of roomWallPanels: each of these reads the same
+ * `walls` array the structural shell and the colliders come from, so a doorway that moves in HouseRooms
+ * moves its facing with it and cannot end up faced over. Same rule as everything since the hallway — no
+ * `collide`, so the procedural shell keeps collision and these are pure facing.
+ *
+ * The upper three carry `minEyeY: 1.9`, the same threshold every other row on that storey uses. Without
+ * it their panels sit inside the 20 m distance cull from most of the ground floor and would be drawn
+ * through the floor all game; with it they exist only while the player's eye is above the hallway's head
+ * height, which can only happen up the stair.
+ *
+ * The corridor's south side is missing from this list by design: it is the bedroom's and living room's
+ * north runs, faced from the other side by BEDROOM_WALL_PANELS and LIVING_WALL_PANELS. Those two rooms
+ * each grew a doorway in that wall, so the panels either side of it fall out of the same run and the
+ * header over the door is faced with it.
+ */
+const BACKHALL_WALL_PANELS: ModelPlacement[] = roomWallPanels('backhall');
+const KITCHEN_WALL_PANELS: ModelPlacement[] = roomWallPanels('kitchen');
+const POOJA_WALL_PANELS: ModelPlacement[] = roomWallPanels('pooja');
+const STORE_WALL_PANELS: ModelPlacement[] = roomWallPanels('store');
+const UP_STORE_WALL_PANELS: ModelPlacement[] = roomWallPanels('up-store', { minEyeY: 1.9 });
+const UP_CHILD_WALL_PANELS: ModelPlacement[] = roomWallPanels('up-child', { minEyeY: 1.9 });
+const UP_SHRINE_WALL_PANELS: ModelPlacement[] = roomWallPanels('up-shrine', { minEyeY: 1.9 });
+
+/**
+ * The flat itself, whose four shell-drawn runs were the last bare plaster the player could walk up to.
+ *
+ * `upper` is `modelled: true`, and that is the whole reason this was missed: the imported cutaway draws
+ * nearly every wall in the room with its own scanned masonry, so the room *looks* faced, and the runs in
+ * its `walls` array read as the plumbing of a modelled room rather than as walls anyone would see. Four
+ * of them are drawn all the same — the model is a diorama missing its west side over the stair's half of
+ * the plan and both outside walls of the bathroom — and `upper` is cellar-toned, so those four came out
+ * in the blue-grey `wallCool` plaster while everything they touch is warm scan. That is the fault in the
+ * photographs: full-height plaster on both cheeks of the entrance door and of UP_BACK_DOOR, meeting the
+ * model's own walls at a hard seam with the facing's 6 cm step exposed edge-on beside it.
+ *
+ * Nothing here has to know which runs those are. roomWallPanels skips `collideOnly`, and every wall the
+ * model draws itself is already marked that way — it had to be, or the shell would have drawn a second
+ * wall inside the first — so this faces exactly the four runs the shell draws and none of the seven it
+ * only collides with. Eight panels, and the two doorway headers among them come out of expandRun with
+ * the rest.
+ *
+ * `minEyeY: 1.9` for the reason the three rooms above it carry it, and here it also pays for itself: the
+ * flat is 2.4 m up, so all eight are culled outright until the player is on the stair.
+ *
+ * Not the black magic room, which the same audit flags for the same shape of reason and where facing
+ * would be the bug: its three shell runs stand *behind* an imported room that draws its own four walls,
+ * so a facing there would put two walls in the same place. See the row at 'black-magic-room.glb'.
+ */
+const UPPER_WALL_PANELS: ModelPlacement[] = roomWallPanels('upper', { minEyeY: 0 });
+
 /** Every faced run in the house, in one list, for the startup gate to filter. */
 const WALL_PANELS: ModelPlacement[] = [
   ...HALL_WALL_PANELS,
   ...BEDROOM_WALL_PANELS,
   ...BEDROOM_SOUTH_WALL_PANELS,
   ...LIVING_WALL_PANELS,
+  ...LIVING_SOUTH_WALL_PANELS,
+  ...LIVING_WEST_WALL_PANELS,
+  ...HALLWAY_EXTENDED_PANELS,
   ...BASEMENT_WALL_PANELS,
   ...SHAFT_WALL_PANELS,
   ...RITUAL_WALL_PANELS,
   ...UPSHAFT_WALL_PANELS,
+  ...BACKHALL_WALL_PANELS,
+  ...KITCHEN_WALL_PANELS,
+  ...POOJA_WALL_PANELS,
+  ...STORE_WALL_PANELS,
+  ...UP_STORE_WALL_PANELS,
+  ...UP_CHILD_WALL_PANELS,
+  ...UP_SHRINE_WALL_PANELS,
+  ...UPPER_WALL_PANELS,
 ];
 
 /**
@@ -546,7 +679,22 @@ export const MODEL_PLACEMENTS: ModelPlacement[] = [
   // sample point moved, which was anisotropy 8 being spent on an unmipmapped sampler; ModelLoader now
   // guarantees a mipmapped minFilter. Magnification is left at Nearest on purpose — the file is deliberate
   // Minecraft pixel art and blurring it is a decision about the art, not a fix.
-  { name: 'painting-sus.glb', height: 0.9, x: 6.4, y: 1.6, z: 0.12, yaw: -Math.PI / 2, lanternLit: true },
+  //
+  // z 0.21, not the 0.12 it hung at, and for the reason the living room's canvas hangs at 9.97: this run
+  // wears a facing whose front is 6 cm proud of the plaster. HALLWAY_WALL_PANELS puts the south-east panel
+  // at z 0.11 by 0.1 deep, so it occupies 0.06 .. 0.16, and the canvas — 0.0376 thick once fitted, centred
+  // on its own z — spanned 0.101 .. 0.139: a painting entirely inside a wall, which is what
+  // `npx tsx tools/audit-facings.ts hallway-wall-` reported as "0.010 m off the panel centre". 0.21 puts
+  // its back at 0.191, 3.1 cm in front of the facing, and leaves every other number on the row alone.
+  //
+  // Not 0.18, which was the first fix. It clears the panel too, by 1.2 mm, but the audit lists anything
+  // within 4 cm in front of a facing on the reasoning that a prop that close is one tweak to
+  // PANEL_FACE_LIFT or to a fit away from being buried again. A canvas is thin enough that the band is a
+  // false positive for it, and the cheap way to keep a guard worth reading is to stay out of it rather
+  // than teach it about a thickness it cannot measure — the tool has `height`, not the fitted depth. So
+  // 0.21, the first hundredth outside the band, which is also where every other painting in the house
+  // already sits: `audit-facings.ts living-wall-` reports none.
+  { name: 'painting-sus.glb', height: 0.9, x: 6.4, y: 1.6, z: 0.21, yaw: -Math.PI / 2, lanternLit: true },
   // The imported masonry stub, as geometry standing against the plaster rather than as a map swapped
   // into it. Its sister file, horror_wall_clean, is placed in the basement instead -- see the row after
   // bed-hospital.glb for why it could not stay on this storey.
@@ -592,6 +740,7 @@ export const MODEL_PLACEMENTS: ModelPlacement[] = [
   { name: 'wall-damaged.glb', id: 'hallway-wall-north-west', clone: true, height: 2.99, fit: { width: 3.1, height: 2.99, depth: 0.1 }, x: -7.4, y: 0.005, z: 2.49, albedo: 1.6 },
   { name: 'wall-damaged.glb', id: 'hallway-wall-north-middle', clone: true, height: 2.99, fit: { width: 8.3, height: 2.99, depth: 0.1 }, x: 0, y: 0.005, z: 2.49, albedo: 1.6 },
   { name: 'wall-damaged.glb', id: 'hallway-wall-north-east', clone: true, height: 2.99, fit: { width: 3.1, height: 2.99, depth: 0.1 }, x: 7.4, y: 0.005, z: 2.49, albedo: 1.6 },
+  ...HALLWAY_EXTENDED_PANELS,
 
   // Noise prop two, standing on the corridor's north side 30 cm off the wall face, 3 m west of the
   // archway, so it is passed on every trip between the hall and the two rooms. beer_bottle is the one
@@ -647,35 +796,38 @@ export const MODEL_PLACEMENTS: ModelPlacement[] = [
   // reason it is worth having here: a cat on a mattress with a shadow on the boards below would read as
   // hovering twice over. 0.8, and its 0.36 x 0.24 m quad stays well inside the 2.1 x 1.0 m bed.
   { name: 'cat-still.glb', height: 0.45, x: -7.7, y: -0.19, z: 9.0, yaw: -Math.PI / 2, on: 'bed.glb', shadow: 0.8 },
-  // Three more sleepers for a room that reads as a place people were kept rather than a bedroom. Each one
-  // arrives at metre scale already, so `height` is the file's own longest axis to four places and is a fit,
-  // not a rescale: the closet is 1.317 x 2.118 x 0.692 with y longest, horror_bed 2.224 x 0.742 x 1.146
-  // with x longest once its floor plane is gone, old_bed 0.786 x 0.682 x 1.756 with z longest.
+  // The three imported sleepers that stood in this room -- closet-old, bed-horror, bed-old -- are placed in
+  // the rear and upper wings now. Their rows travelled whole and nothing about them was re-measured, because
+  // each `height` is a fit rather than a rescale (the closet is 1.317 x 2.118 x 0.692 with y longest,
+  // horror_bed 2.224 x 0.840 x 1.149 with x longest once its floor plane is gone, old_bed 0.786 x 0.682 x
+  // 1.756 with z longest) and a fit does not care which room it stands in. See the store room in the rear
+  // wing for the closet, and the two upper back rooms for the beds.
   //
-  // All three go along the north and east walls, in the two bands HouseProps leaves empty -- north-east
-  // x -4.1 .. -1.2, z 8.0 .. 10.1 and south-east x -4.1 .. -1.2, z 2.7 .. 5.7. bed.glb and the cat hold
-  // the north-west corner against the west wall, while the dressing table and its code box hold the
-  // south-west one.
-  // The east wall's own band is wider than those numbers now — the procedural wardrobe that stood at
-  // (-1.45, 6.6) is gone — but nothing here was moved into the space, because the closet is the wardrobe
-  // in this room and putting a fourth sleeper against that wall is what the empty bands are avoiding.
+  // Hiding is why they went. armHiding() arms every bed and wardrobe it is handed and recognises them by
+  // file name -- BED_NAMES, WARDROBE_NAMES -- so with all four in here, four of the house's four hiding
+  // places were inside six metres of the spawn and every other room had none. The three that left carry no
+  // `id` for exactly that reason: `onPlaced` dispatches on `p.id ?? p.name`, and an id would have made them
+  // ordinary furniture wherever they landed. This room keeps bed.glb, which is a BED_NAMES spot itself, so
+  // the player still wakes beside somewhere to hide.
   //
-  // albedo on the two dark ones, none on the closet's near neighbours: their maps mean 106,88,69 and
-  // 98,76,63, i.e. linear 0.105 and 0.081, against the 0.222 of the bed.glb standing beside them that
-  // needs no lift at all. 1.6 and 1.8 put them just under it rather than level with the plaster.
-  //
-  // The closet stands at z 9.65, not the 9.75 it had against bare plaster. It is 0.692 deep, so it used
-  // to reach z 10.096 against an inner face at 10.1 — 4 mm, which was the point. The damaged-wall facing
-  // now hangs 6 cm in front of that face, ending at 10.04, and this is the one prop in the room where a
-  // 5.6 cm interpenetration would actually be seen: it is a WARDROBE_NAMES hiding spot, so the camera
-  // goes inside it and would have looked out through the back of the wall. 10 cm south restores the same
-  // 4 cm of air, to the facing this time, and keeps it a third of a metre clear of horror_bed.
-  { name: 'closet-old.glb', height: 2.1179, x: -2.0, z: 9.65, collide: true, albedo: 1.6, shadow: 1 },
-  // `drop` takes the 4.44 x 4.44 m ground plane the file ships under the bed (Floor_Floor_0, 2 triangles).
-  // It is the longest axis in the file, so left in it would set the scale for everything -- the bed would
-  // come out half size -- and it would z-fight the bedroom floor across a fifth of the room.
-  { name: 'bed-horror.glb', drop: ['Floor'], height: 2.224, x: -2.8, z: 8.4, collide: true, albedo: 1.8, shadow: 1 },
-  { name: 'bed-old.glb', height: 1.7557, x: -1.6, z: 4.3, collide: true, albedo: 1.8, shadow: 1 },
+  // What is left is the room the clue trail needs and nothing more: the spawn bed and its cat, the dressing
+  // table with the code box and the stopped clock over it, the bedside table with the diary, and the window
+  // seat with the photograph. The north-east and south-east bands HouseProps leaves empty -- x -4.1 .. -1.2
+  // by z 8.0 .. 10.1 and x -4.1 .. -1.2 by z 2.7 .. 5.7 -- are now empty in fact as well as by intention,
+  // which matters at CatRoutes' north rail: that rail was pinched to 0.59 m by bed-horror's west face and is
+  // pinched by nothing now. Its nodes stay where they were measured rather than moving back, since widening
+  // Bedroom vanity dresser with lamp and animated sliding drawer.
+  // Placed along the bedroom's north wall, east of the back corridor door.
+  {
+    name: 'dresser-bedroom.glb',
+    id: 'dresser-bedroom',
+    height: 1.4,
+    x: -2.8,
+    z: 9.5,
+    yaw: Math.PI,
+    collide: true,
+    shadow: 1,
+  },
   // The bedroom's own door leaf, replacing the procedural one -- see the doorLeaves array in HouseScene,
   // from which BEDROOM_DOOR's entry is gone so the two do not stand in the same opening.
   //
@@ -700,13 +852,47 @@ export const MODEL_PLACEMENTS: ModelPlacement[] = [
   // stop at x -5.85 and restart at x -4.25, and the leaf lives between them at x -5.80 .. -5.22. All that
   // is left is the header, at y 2.1 .. 3.0, and the leaf is 2.15 tall: a 5 cm sliver of its top corner,
   // above head height, inside a doorway, on the hinge side. Not worth a millimetre of anything.
-  { name: 'door-inner.glb', id: 'door-bedroom', clone: true, height: 2.15, x: -5.51, z: 3.05, yaw: -1.0, albedo: 2.0 },
+  { name: 'door-inner.glb', id: 'door-bedroom', clone: true, height: 2.15, x: -5.51, z: 3.05, yaw: -1.0, leaf: 4, albedo: 2.0 },
 
   // The living-room leaf uses the same clean imported door as the bedroom. Both openings are 1.6 x
   // 2.1 m, so the bedroom's measured west-jamb placement carries across exactly: at 2.15 m tall the
   // leaf is 1.074 m wide, yaw -1.0 puts its hinge on x = 4.20 / z = 2.60, and leaves 1.02 m clear to
   // walk through. Its distinct id prevents the upper-flat interaction arm from treating it as that door.
-  { name: 'door-inner.glb', id: 'door-living', clone: true, height: 2.15, x: LIVING_DOOR.x - 0.51, z: LIVING_DOOR.z + 0.45, yaw: -1.0, albedo: 2.0 },
+  { name: 'door-inner.glb', id: 'door-living', clone: true, height: 2.15, x: LIVING_DOOR.x - 0.51, z: LIVING_DOOR.z + 0.45, yaw: -1.0, leaf: 4, albedo: 2.0 },
+
+  /**
+   * The rear wing's five leaves. Until now those doorways were holes: the wall runs cut the openings
+   * and the colliders left the gaps, so the player could walk through, but there was no frame and no
+   * door — see HouseScene's casings array for the frames that landed with these.
+   *
+   * All five reuse the bedroom row's measured arithmetic rather than inventing any. At height 2.15 the
+   * leaf is 1.074 wide, and for a hinge at jamb H on an east-west wall, a swing of 1.0 rad (57 deg) off
+   * the wall puts the leaf's centre 0.29 along the wall from H and 0.45 off it — which is exactly the
+   * `- 0.51` / `+ 0.45` the living row spells out with the 0.8 half folded in. So the offsets below read
+   * as (half - 0.29) along the wall and 0.45 across it, and the sign of each says which jamb and which
+   * way. Every one swings into the space the player is walking into, not the one they came from:
+   *
+   * - The two off the front of the house swing north into the back corridor, hinged on their west jambs.
+   *   Both openings are BEDROOM_DOOR's 1.6 x 2.1, so both keep its 1.02 m of clear walking width, and
+   *   both free edges land at z 11.10 — well inside a corridor 2 m deep, and clear of the three
+   *   doorways in its far wall at z 12.2.
+   * - The three off the corridor into the rooms behind swing north as well. Their openings are 1.4 m,
+   *   so the same 57 deg covers 1.074 x cos(1.0) = 0.58 of it and leaves 0.82 m to walk through.
+   * - The prayer room's hinges on its *east* jamb instead, which is the same numbers mirrored: yaw
+   *   1.0 - pi is 57 deg off the wall the other way. Three identical doors down one corridor wall is
+   *   the one thing that would read as generated rather than built.
+   *
+   * Ajar, no blocker, no interaction: this house's policy for interior leaves. The distinct ids are
+   * load-bearing — `door-inner.glb` is the name armInnerDoor() answers to in HouseScene, and it
+   * hard-codes the upper flat's geometry, so an id-less clone here would be hinged one storey up.
+   * albedo matches the two rows above for the reason those match each other: clone(true) shares
+   * materials and brighten() dedups per material, so whichever is placed first sets the factor for all.
+   */
+  { name: 'door-inner.glb', id: 'door-back-w', clone: true, height: 2.15, x: BACK_DOOR_W.x - 0.51, z: BACK_DOOR_W.z + 0.45, yaw: -1.0, leaf: 4, albedo: 2.0 },
+  { name: 'door-inner.glb', id: 'door-back-e', clone: true, height: 2.15, x: BACK_DOOR_E.x - 0.51, z: BACK_DOOR_E.z + 0.45, yaw: -1.0, leaf: 4, albedo: 2.0 },
+  { name: 'door-inner.glb', id: 'door-kitchen', clone: true, height: 2.15, x: KITCHEN_DOOR.x - 0.41, z: KITCHEN_DOOR.z + 0.45, yaw: -1.0, leaf: 4, albedo: 2.0 },
+  { name: 'door-inner.glb', id: 'door-pooja', clone: true, height: 2.15, x: POOJA_DOOR.x + 0.41, z: POOJA_DOOR.z + 0.45, yaw: 1.0 - Math.PI, leaf: 4, albedo: 2.0 },
+  { name: 'door-inner.glb', id: 'door-store', clone: true, height: 2.15, x: STORE_DOOR.x - 0.41, z: STORE_DOOR.z + 0.45, yaw: -1.0, leaf: 4, albedo: 2.0 },
 
   /**
    * The cellar and basement leaves, replacing the last two procedural ones — HouseScene's doorLeaves
@@ -747,8 +933,8 @@ export const MODEL_PLACEMENTS: ModelPlacement[] = [
    * id and hard-codes UPPER_DOOR — from hinging a leaf that stands two storeys below it. albedo matches
    * that row for the reason door-bedroom's matches its own: clone(true) shares materials.
    */
-  { name: 'door.glb', id: 'door-cellar', clone: true, drop: ['frame'], height: 2.15, x: -8.5751, z: 0.7729, yaw: Math.PI / 2 + 1.0, albedo: 2.0 },
-  { name: 'door.glb', id: 'door-basement', clone: true, drop: ['frame'], height: 2.15, x: -14.0851, y: BASE_Y, z: 0.7168, yaw: Math.PI / 2 - 0.6, albedo: 2.0 },
+  { name: 'door.glb', id: 'door-cellar', clone: true, drop: ['frame'], height: 2.15, x: -8.5751, z: 0.7729, yaw: Math.PI / 2 + 1.0, leaf: 4, albedo: 2.0 },
+  { name: 'door.glb', id: 'door-basement', clone: true, drop: ['frame'], height: 2.15, x: -14.0851, y: BASE_Y, z: 0.7168, yaw: Math.PI / 2 - 0.6, leaf: 4, albedo: 2.0 },
 
   // Noise prop three, on the bare boards between the room's centre and the east wall — the one
   // clear stretch of this floor, since the beds, a closet, two tables and a chair have the rest of it.
@@ -767,6 +953,8 @@ export const MODEL_PLACEMENTS: ModelPlacement[] = [
   // for a wall the player walks past rather than looks at. The two walls this room's clues are on — north
   // for the list, east for the photographs — are both faced, and both were measured against the facing.
   ...LIVING_WALL_PANELS,
+  ...LIVING_SOUTH_WALL_PANELS,
+  ...LIVING_WEST_WALL_PANELS,
   // The one table in this room, and now the only thing in it a player can put a hand on. The armchair it
   // used to stand beside and the fireplace it used to stand next to are both gone, along with the dining
   // table and chair and the rug — see HouseProps.living, which was emptied down to wall dressing and a
@@ -782,12 +970,20 @@ export const MODEL_PLACEMENTS: ModelPlacement[] = [
   { name: 'table.glb', height: 0.75, x: 7.6, z: 5.4, collide: true, shadow: 1 },
   // knife.glb is not here: the daayan holds it. See DaayanKnife, and note that a row here would
   // fight the hand attachment for the cached Group exactly as a lantern row would fight HeldLantern.
-  // North wall, east of the window. Turned for the same reason as the other painting; this one is
+  // North wall, west of the window. Turned for the same reason as the other painting; this one is
   // double-sided, so hung unturned it showed the wood backing of the canvas.
   //
   // z 9.97 rather than the 10.03 it hung at, for the same reason the closet moved: the facing's front is
   // at 10.04, and a canvas hung at 10.03 would have been a painting inside a wall.
-  { name: 'painting-sun.glb', height: 0.8, x: 7.0, y: 1.5, z: 9.97, yaw: Math.PI },
+  //
+  // x 0.45, not the 7.0 it hung at. BACK_DOOR_E was cut in this wall at x 7, so the canvas -- 0.80 wide
+  // by 0.65 tall, spanning 6.60..7.40 by 1.50..2.15 -- was left hanging in the middle of a 1.6 m doorway
+  // with 1.5 m of air under it and its top edge 5 cm above the lintel. The facing is cut to the same
+  // holes and so reports what is left to hang on: x -0.95..2.85 west of the window, 5.15..6.15 between
+  // window and door, 7.85..8.95 east of it. Only the first is wider than a canvas and two margins, and
+  // living.list has 1.87..2.13 of it for the shopping list pinned beside the window -- so 0.45 centres
+  // the canvas in the 2.82 m that are left, a metre off the west corner and a metre off the list.
+  { name: 'painting-sun.glb', height: 0.8, x: 0.45, y: 1.5, z: 9.97, yaw: Math.PI },
   // Noise prop four, and the only one of them off the floor. `on` reads the side table's measured top
   // rather than restating it — 0.689, its 0.588 x 0.540 x 0.509 fitted to 0.75 on x — so retuning the
   // table carries the plate up with it. Set 12 cm west and 10 cm south of the table's centre, which
@@ -799,6 +995,109 @@ export const MODEL_PLACEMENTS: ModelPlacement[] = [
   // the interaction anchor for the ledger is 8 cm above this top and a plate through the page would be
   // the first thing the prompt drew the player's eye to. This row must stay after table.glb's.
   { name: 'plate-ceramic.glb', height: 0.26, x: 7.48, z: 5.3, on: 'table.glb', shadow: 1 },
+  // The ornate French chateau wardrobe, with animated swinging doors and sliding drawer.
+  // Placed against the living room's west wall, facing east into the spacious living area.
+  {
+    name: 'wardrobe-chateau.glb',
+    id: 'wardrobe-chateau',
+    height: 2.5,
+    x: -0.3,
+    z: 5.5,
+    yaw: Math.PI / 2,
+    collide: true,
+    shadow: 1,
+  },
+  // Summer cafe table and folding chairs, full realistic scale in the large living room.
+  {
+    name: 'caffe-set.glb',
+    id: 'caffe-set',
+    height: 2.35,
+    x: 5.6,
+    z: 6.6,
+    collide: true,
+    shadow: 1,
+  },
+
+  // --- Rear wing (back corridor, kitchen, prayer room, store) ---
+  // The wing's faced runs, so the four rooms wear the same damaged masonry as the rest of the house
+  // instead of the bare plaster they were built with. Every row comes from roomWallPanels over the same
+  // `walls` array the shell and the colliders read — see the block above BACKHALL_WALL_PANELS for why
+  // these are facings without `collide`, and why the corridor's south side is not in the list.
+  //
+  // Placed here rather than appended so the file still reads in ROOMS order: the corridor and its three
+  // rooms sit between the living room and the basement, which is where they are on the floor plan. The
+  // three doorway leaves off the corridor are up in the bedroom block with the rest of the rear wing's
+  // five, which is where that set of numbers is explained.
+  ...BACKHALL_WALL_PANELS,
+  ...KITCHEN_WALL_PANELS,
+  ...POOJA_WALL_PANELS,
+  ...STORE_WALL_PANELS,
+
+  // The three rooms off the corridor were built empty and stayed empty through every dressing pass. One
+  // piece each, in ROOMS order, and each one measured against its room's faced fronts rather than its
+  // room's nominal walls -- a facing hangs 6 cm proud of the plaster, so the front a prop has to clear is
+  // the run's line plus 0.16 inward, and a run this room does not own is bare plaster at 0.10 instead.
+  //
+  // A second table.glb for the kitchen, as a work table rather than a side table. The living room's row is
+  // the same file and has to stay where it is -- living.ledger is a sheet on its measured top and
+  // plate-ceramic.glb stands `on` it -- so this is a copy, and a copy of this file is free: clone(true)
+  // shares geometry and materials, and the loader has the Group cached from the living room already.
+  //
+  // No `albedo`, which is a constraint rather than a choice. brighten() dedups on the material it lands on
+  // and both rows point at the same one, so whichever were placed first would set the factor for both; the
+  // living row carries none, so neither can. The map is dark for it -- mean 83.8,48.8,24.4, linear colour x
+  // map products 0.088,0.030,0.009 -- and it has read correctly in the living room since it was placed,
+  // which is the measurement that says to leave it alone.
+  //
+  // `height` 0.8167 where the living room's is 0.75, and it is the only number that differs. The file is
+  // 0.588 x 0.540 x 0.509 with x longest, so a fit to h puts the top at 0.918h: 0.75 gives the 0.689 the
+  // plate's row is measured against, and 0.8167 gives 0.750 exactly, which is a height to stand and work
+  // at. The footprint follows to 0.817 x 0.707.
+  //
+  // Against the north wall, whose facing fronts at z 17.04, so z 16.65 leaves the top's back edge at 17.004
+  // and 3.6 cm of air. x -4.6 keeps it out of two things: the east facing's front at -3.16 is 1.03 m from
+  // its edge at -4.192, and door-kitchen's leaf -- 1.074 x 0.230 turned -1.0 rad, so a footprint of
+  // Complete wooden kitchen counter & cupboard suite, fitted with clearance from the kitchen's north wall.
+  {
+    name: 'kitchen-counter.glb',
+    id: 'kitchen-counter',
+    height: 2.2,
+    x: -5.8,
+    z: 15.7,
+    yaw: Math.PI,
+    collide: true,
+    shadow: 1,
+  },
+  // Antique round carved pedestal table for the prayer room.
+  {
+    name: 'table-antique.glb',
+    id: 'table-antique',
+    height: 1.1,
+    x: 0,
+    z: 15.0,
+    collide: true,
+    shadow: 1,
+  },
+  // closet-old.glb for the store room, from the bedroom. Scale 1.0 at height 2.1179 -- the fit is the file's
+  // own y -- so it is 1.317 wide by 0.692 deep, and the doors are at -z: the single mesh's box runs
+  // z -0.346 .. +0.346, and which face is which was settled by the bedroom row standing it against a north
+  // wall at yaw 0. This room's north wall is the one it wants, so the row keeps yaw 0 and only x and z move.
+  //
+  // z 16.65 is the bedroom row's clearance carried across rather than re-derived. STORE's north run is at
+  // 17.2 and the store owns it, so the facing fronts at 17.04 and the closet's back reaches 16.996 -- the
+  // same 4.4 cm of air the bedroom row was retuned to. That margin is not cosmetic here: this is the
+  // WARDROBE_NAMES pocket, so the camera goes inside the box, and a back edge past the facing would have it
+  // looking out through the wall.
+  //
+  // x 4.4 spans 3.741 .. 5.059, west of the door line and clear of the west face at 3.1, which is bare
+  // plaster on this side because the prayer room owns x 3. It leaves the run from STORE_DOOR to the north
+  // wall open and the whole east half of the room free, and door-store's leaf at x 5.203 .. 5.977 by
+  // z 12.136 .. 13.164 is three and a half metres away on z. Reachable: the collider's south face is at
+  // 16.344, so a 0.35 m player gets their centre to 15.994 and the interaction point is 0.66 m from there
+  // against a reach of 1.535.
+  //
+  // No `id`, so WARDROBE_NAMES still matches and this is a hiding place. albedo 1.6 as it always was.
+  { name: 'closet-old.glb', height: 2.1179, x: 4.4, z: 16.65, collide: true, albedo: 1.6, shadow: 1 },
 
   // --- Basement ---
   // Its five runs, faced. Two of them touch basement.glb's own dressing by a centimetre: the water pipe
@@ -952,6 +1251,19 @@ export const MODEL_PLACEMENTS: ModelPlacement[] = [
     albedo: 1.8,
     drop: ['Plane011'],
   },
+  // Heavy industrial metal mechanical table for the basement workshop.
+  {
+    name: 'table-mechanical.glb',
+    id: 'table-mechanical',
+    height: 1.8,
+    x: -18.5,
+    y: BASE_Y,
+    z: 3.5,
+    yaw: 0,
+    maxEyeY: -0.2,
+    collide: true,
+    shadow: 1,
+  },
 
   // --- Black magic room (through the basement's north wall, see HouseRooms.BLACK) ---
   // The mirror of the basement's problem. basement.glb was a room worth importing for its clutter, so
@@ -1081,6 +1393,44 @@ export const MODEL_PLACEMENTS: ModelPlacement[] = [
     albedo: 2,
     shadow: 1,
   },
+  /**
+   * What is in the coffin. It is the payoff of the whole ritual-room puzzle: the lid swings open on
+   * solve (see Coffin.ts, and the toast HouseScene fires with it) and until now it exposed an empty box
+   * with a key sitting in it.
+   *
+   * The cavity was measured rather than guessed, because a bounding box cannot see into a hollow model
+   * — the coffin's sides are single quads with no vertices between rim and base, so `.cavity.mjs` finds
+   * nothing there and `.ray.mjs` had to shoot through it. In the source file the interior floor is at
+   * y 12.31 and the rim at 65.07, and the row above seats the file's own min y (-5.02) on BASE_Y at
+   * 2.4/674.618 = 0.003557 m per unit. That puts the cavity floor at world y -2.9383, the rim at
+   * -2.7507, and gives it a working depth of just 18.8 cm. In plan it runs z 1.145 .. 3.454 and is a
+   * toe-pincher: 0.93 m across at the shoulders, tapering to 0.49 m at the foot end, head at low z.
+   *
+   * `pitch` exists for this row and nothing else. The file is a standing figure, 1.232 x 3.362 x 0.483
+   * with y longest and +z its front — the toes and the rib cage both face that way. A -pi/2 pitch sends
+   * local +y to world -z, which lays the head toward the cavity's head end, and local +z to world +y,
+   * which puts it on its back looking up. The longest axis is then world z, so `height: 1.75` still
+   * reads as a 1.75 m person, laid down the length of the box with 28 cm to spare at either end. Its
+   * width lands inside the taper at every point that matters: hands at x +-0.32 where the cavity gives
+   * 0.36, elbows +-0.32 against 0.38, feet +-0.13 against 0.27.
+   *
+   * The one number that had to be chosen rather than measured is y. Laid flat this skeleton is 20.8 cm
+   * from shoulder blade to sternum and the cavity is 18.8 cm deep, so resting it on the interior floor
+   * would stand the rib cage 2 cm proud of the rim. `BASE_Y + 0.03` seats it 3 cm *below* that floor,
+   * which reads as a body settled into the box: the ribs clear the rim by 1.1 cm and the skull by 1.5,
+   * while the buried half stays inside a base slab 6.2 cm thick, so nothing shows through underneath.
+   * The feet are the exception and are left alone — authored standing, their toes point at the ceiling
+   * and reach 3.2 cm above the rim, which the closed lid's 18.7 cm shell swallows whole and the open
+   * one turns into feet in a shallow coffin.
+   *
+   * No `collide`: it is dressing inside a container, and its footprint is the coffin's, which already
+   * collides. No `shadow`: the contact quad would be drawn inside the coffin's base. No `clip` either —
+   * the pipeline drops this file's animations. And no `albedo`, alone among its neighbours here: that
+   * multiplier is for maps authored for a lit room, and this one already means 198,183,160 sRGB, linear
+   * 0.57 — two orders of magnitude brighter than the 0.086 the doorframes needed it for. Doubling it
+   * would clamp to white and turn bone into paper.
+   */
+  { name: 'skeleton.glb', height: 1.75, x: -26.8, y: BASE_Y + 0.03, z: 2.3, pitch: -Math.PI / 2 },
   // Far corner, turned toward the altar rather than toward the door: the player should find her
   // already occupied, not waiting for them. 1.85 rather than a human 1.7 so she reads as taller than
   // the player the moment she is seen; the ritual room's ceiling is 2.8 above BASE_Y, and her
@@ -1103,15 +1453,25 @@ export const MODEL_PLACEMENTS: ModelPlacement[] = [
   //
   // The stair: 3.936 is its longest axis (9.4849) x 0.41497, the one scale at which its 0.7229 m
   // tread rise becomes 0.300 — inside the controller's 0.35 m step-up — and its eighth tread lands
-  // exactly on UP_Y. y drops it 0.058 so its own bottom step meets the shaft floor at 0 rather than
+  // exactly on UP_Y. y drops it 0.068 so its own bottom step meets the shaft floor at 0 rather than
   // floating above it, the bbox bottom being that much lower than the step. Turned to climb east,
   // on the stairwell's centre line; x puts the top tread's edge on the upper room's floor edge.
-  // upStairFloors() is what the player actually walks on.
+  // upStairFloors() is what the player actually walks on, and it is analytic — 8 x 0.3 off y 0 — so
+  // it does not move with this row.
+  //
+  // The last 0.01 of that drop is the other half of the threshold band. At -0.058 the top tread
+  // crowned at 2.4040: 4 mm proud of the flat's own floor slab, which the apartment row below seats
+  // on UP_Y, and 8 mm proud of UPPER_PATCH.floorY at 2.3960. Walking in through UPPER_DOOR you
+  // crossed an 11 mm sandwich of ridged imported tread, patch floorboards and shaft-wall cap inside
+  // 45 cm of x, all three near enough coplanar to trade places as the view moved. Ten more
+  // millimetres puts the crown at 2.3940, under both floors, so the flat's boards own the threshold
+  // outright and the tread is only ever seen going down. Collision does not move, so the player still
+  // stands on 2.400 with the boards a hair under their feet.
   //
   // albedo, not curve: the treads are one warm wood material seen from half a metre with the lantern
   // in hand, so there is no tonal range for a clamped multiply to flatten, and the shaft is below eye
   // 1.9 where HouseScene's `up` fill never fires. Checked at the stair foot — warm, not clipped.
-  { name: 'stair-wood.glb', height: 3.936, x: 12.43, y: -0.058, z: 1.3, yaw: Math.PI, albedo: 2.2 },
+  { name: 'stair-wood.glb', height: 3.936, x: 12.43, y: -0.068, z: 1.3, yaw: Math.PI, albedo: 2.2 },
   // The apartment, at its authored size: 11.2077 *is* its longest axis, so the scale is 1 and its
   // rooms stay life-sized. Unrotated, because the side its shell leaves open already faces west, at
   // the stair. y seats its floor slab on UP_Y — the slab is 0.0592 above the model's lowest
@@ -1130,7 +1490,13 @@ export const MODEL_PLACEMENTS: ModelPlacement[] = [
   // `gain` is the fourth: the curve lifts the factors and cannot lift the maps they multiply, and the
   // maps are what left this flat reading black at the threshold. See `gain` for the measurements.
   // `lift` is the fifth, for the ceiling the uniform gain could not reach. See `lift`.
-  { name: 'room-upper.glb', height: 11.2077, x: 19.41, y: UP_Y - 0.0592, z: 3.676, minEyeY: 1.9, curve: 0.28, gain: 3.0, lift: 6, seal: true, carve: [UPPER_INNER_CUT], walls: { y0: 0.2, y1: 1.7, top: 2.6 } },
+  { name: 'room-upper.glb', height: 11.2077, x: 19.41, y: UP_Y - 0.0592, z: 3.676, minEyeY: 0.5, curve: 0.28, gain: 3.0, lift: 6, seal: true, carve: [UPPER_INNER_CUT, UP_HIDDEN_CUT], walls: { y0: 0.2, y1: 1.7, top: 2.6 } },
+  // Directly after the model, because these face the sides the model does not have. It is a cutaway, and
+  // the four runs the shell puts back were the last cellar-toned plaster the player could stand in front
+  // of — two cheeks either side of the front door below, two either side of UP_BACK_DOOR, and the two
+  // sealed bathroom corners. See UPPER_WALL_PANELS for why the room reads as already faced and how the
+  // eleven walls the model *does* draw stay out of this.
+  ...UPPER_WALL_PANELS,
   // The flat's own front door, filling that opening. Measured from the file: its axes are
   // 0.5715 : 1 : 0.1353, so height 2.56 makes it 1.463 wide x 0.346 thick and the frame's head lands
   // 6 cm above the opening's 4.9 header — the overlap is the point, at 2.5 the two would have met on a
@@ -1139,7 +1505,35 @@ export const MODEL_PLACEMENTS: ModelPlacement[] = [
   // means 57,57,47, which is the same mid-dark Lambert takes to nothing at lantern range.
   //
   // It only hangs here; the swing is armUpperDoor()'s, from the placement hook.
-  { name: 'door.glb', height: 2.56, x: UPPER.x0, y: UP_Y, z: UPPER_DOOR.z, yaw: Math.PI / 2, minEyeY: 1.9, albedo: 2.0 },
+  /**
+   * The hidden door's leaf, and **its position in this array against the front door's row below is
+   * load-bearing**.
+   *
+   * Both are `door.glb`. The loader caches by file and hands copies to `clone` rows, and `onPlaced`
+   * fires after a row is placed — so a clone taken *after* the front door has been armed would copy a
+   * tree that `armUpperDoor` has already re-parented, arriving with an `upper-door.pivot` and the leaf
+   * hung under it. This row is the first `door.glb` row that is a clone and it comes before the
+   * non-clone one, so it copies clean.
+   *
+   * `drop: ['frame']` — the model's own doorway already has its surround, exactly as the cellar and
+   * basement rows drop it. The file's axes are 0.5715 : 1 : 0.1353, so 2.15 makes it 1.229 wide and
+   * 0.291 thick, which fills the 1.24 m carve without lapping the jambs. It only hangs here; the swing
+   * and the red lock are armHiddenDoor()'s.
+   */
+  {
+    name: 'door.glb',
+    id: 'hidden-door',
+    clone: true,
+    drop: ['frame'],
+    height: 2.15,
+    x: UP_HIDDEN_DOOR.x,
+    y: UP_Y + 0.02,
+    z: UP_HIDDEN_DOOR.z,
+    yaw: Math.PI / 2,
+    minEyeY: 0.5,
+    albedo: 2.0,
+  },
+  { name: 'door.glb', height: 2.56, x: UPPER.x0, y: UP_Y, z: UPPER_DOOR.z, yaw: Math.PI / 2, albedo: 2.0 },
   // The leaf for the doorway carved through the flat's east partition. Like the main gate and unlike
   // door.glb, the whole file is the leaf — two meshes on one material, no frame and no jambs — so
   // makeCasing() is the frame here. No `drop`: the source ships a Lamp and a Camera, and the pipeline's
@@ -1153,7 +1547,146 @@ export const MODEL_PLACEMENTS: ModelPlacement[] = [
   //
   // Turned a quarter turn for the same reason door.glb is: the leaf's width runs along its own x and
   // this doorway's runs along world z. It only hangs here; the swing is armInnerDoor()'s.
-  { name: 'door-inner.glb', height: 2.15, x: UPPER_INNER.x, y: UPPER_INNER.bottom, z: UPPER_INNER.z, yaw: Math.PI / 2, minEyeY: 1.9, albedo: 2.0 },
+  { name: 'door-inner.glb', height: 2.15, x: UPPER_INNER.x, y: UPPER_INNER.bottom, z: UPPER_INNER.z, yaw: Math.PI / 2, minEyeY: 0.5, albedo: 2.0 },
+  /**
+   * The upper wing's three leaves stood here — the flat's south door into the attic store, the store's
+   * east door into the child's room, the store's south door into the shrine — hung the way the rear
+   * wing's five downstairs still are. They are gone. Those three openings are casing and no leaf now.
+   *
+   * They were the "view glitch" reported on this storey over and over, and the fifth and last round of
+   * it. The four rounds before this one each found a real bug; this one is not a renderer bug at all. A
+   * leaf is 1.074 x 2.15 m standing 57 degrees across a 1.4 m opening, and a doorway is the one place in
+   * the house where the player walks *into* geometry rather than up to it. From a stand half a metre off
+   * the slab with the head tipped 25 degrees down, the leaf owns 34-42% of the lower third of the frame
+   * as one solid region: measured on all three, fill 0.68-0.87, mean rgb about 120,68,45 at r/b 2.3-3.2.
+   * That is the brown band across the bottom of the screenshots, and blame-searching the band one child
+   * at a time lands on `door-up-back`'s slab, 3266 of the 10944 pixels in it.
+   *
+   * Why LEAF_HIDE below does not cover it, and cannot: leafBoxes traces the slab's own diagonal, so
+   * `door-up-back`'s four windows span z -1.851..-1.029 while those stands are at z -0.7..-1.3 — half a
+   * metre clear of the slab on every axis. A keep-out inflated that far is not a keep-out, it is a room,
+   * and at half a metre a door is legitimately in view. The leaf standing there *is* the artefact, so
+   * the leaf is what goes.
+   *
+   * Nothing else went with them. This file is all leaf — see the row above — so makeCasing() still frames
+   * all three openings, and these leaves carried no collider and no interaction ("ajar, no blocker, no
+   * interaction"), so no walk path changes. If they are ever wanted back: same 2.15 height and the same
+   * (half - 0.29) along the wall / 0.45 across it as the rear wing's five, y: UP_Y, minEyeY: 1.9, and
+   * yaw 1.0 / 1.0 - pi/2 / pi - 1.0 for back / child / shrine respectively — the middle one quarter-turned
+   * because that opening's width runs along world z and the leaf's along its own x.
+   */
+  // The upper wing's three rooms, faced with the same scan, for the same reason the rear wing downstairs
+  // now is: they were the last plaster left in the house. Built by roomWallPanels off each room's own
+  // `walls`, so the store's two partitions carry their doorways' reveals and the child's room's north run
+  // stops at x 20.97 where the flat's own south wall takes over — both already true in HouseRooms, and
+  // neither restated here.
+  //
+  // The `minEyeY: 1.9` these were built with is the point of putting them in one place: without it the
+  // 20 m radius cull reaches this wing from most of the ground floor and submits a storey of panels
+  // through a floor the renderer knows nothing about. See the block above UP_STORE_WALL_PANELS.
+  //
+  // The shrine's north side is faced from the store's side of that partition and left bare on its own,
+  // which is what every shared wall in the house does — one run, one collider, faced from the room that
+  // owns it.
+  ...UP_STORE_WALL_PANELS,
+  ...UP_CHILD_WALL_PANELS,
+  ...UP_SHRINE_WALL_PANELS,
+  // The upper wing's three rooms were built empty too, and take the same one piece each, in ROOMS order.
+  // Every row here needs `y: UP_Y` for the storey it stands on and `minEyeY: 1.9` for the reason the facings
+  // above carry it — without it the 20 m radius cull reaches this wing from most of the ground floor and
+  // submits a storey of furniture through a floor the renderer knows nothing about.
+  //
+  // A second painting-sus.glb for the attic store, on the one unbroken run it has: the east partition
+  // carries UP_CHILD_DOOR, the south one UP_SHRINE_DOOR, and the north side is the way in, so the west wall
+  // is the only wall in the room with nothing cut through it. A copy rather than a move — the hallway keeps
+  // its painting — and free for the same reason the kitchen table is.
+  //
+  // `lanternLit` on a shared material, which is safe because lanternLight() is idempotent by construction:
+  // it skips any material that already carries a `map`, and the move it performs sets one. Whichever of the
+  // two rows is placed first converts the material and the other's call does nothing. No `albedo` on either,
+  // which is the brighten() dedup constraint the kitchen table is under — and here it is moot anyway, since
+  // the file's baseColorFactor is 0,0,0 with no base texture at all and any multiple of black is black. That
+  // is the whole reason `lanternLit` exists; see its doc.
+  //
+  // `yaw: 0` written out, not left off, and this row is the one place in the file where that matters. The
+  // apply step is `if (p.yaw !== undefined) root.rotation.y = p.yaw`, and the copy is taken from the cached
+  // Group the hallway row above has already turned by -pi/2 in place — that row is not a clone, so it
+  // rotated the shared original rather than a copy of it. Omitting yaw here would not have meant zero, it
+  // would have meant keep: measured in the live WebView it came out 0.500 wide on x by 0.038 thick on z,
+  // spanning x 14.36 .. 14.86, a fin driven through the west wall instead of a painting hung on it. No
+  // other file is exposed. wall-damaged.glb has no un-cloned row at all, table.glb's carries no yaw, and
+  // the two door files' un-cloned rows are placed after their copies and set yaw on every row regardless.
+  //
+  // Zero is what the wall wants. The canvas's face normal is local +x — the hallway row turns -pi/2 to aim
+  // that at world +z, north up the hallway — so unrotated it looks +x, into the room off a west wall. The
+  // fit at height 0.9 is then 0.501 wide on z by 0.0376 thick on x, so x 14.61 puts its back at 14.591,
+  // 3.1 cm in front of the west facing at 14.56: the same standoff the hallway row is cut to, and for the
+  // same reason, which is that audit-facings.ts calls anything within 4 cm of a facing a burial waiting to
+  // happen. z -4.135 centres it on the room's usable depth, square on the sightline from UP_CHILD_DOOR,
+  // which is at z -4.0 in the wall directly opposite.
+  //
+  // y UP_Y + 1.25 rather than the hallway row's 1.6. This storey's rooms are 2.7 tall against the ground
+  // floor's 3.0, and at 1.6 a 0.9 m canvas would leave 0.2 m to the ceiling; 1.25 centres it 1.70 above the
+  // floor, which is eye height, so the player meets it head on and it still clears the ceiling by 0.55.
+  { name: 'painting-sus.glb', id: 'painting-sus-store', clone: true, height: 0.9, x: 14.61, y: UP_Y + 1.25, z: -4.135, yaw: 0, minEyeY: 1.9, lanternLit: true },
+  // Vintage ornate iron key prop, placed in the attic store.
+  {
+    name: 'key-iron.glb',
+    id: 'key-iron',
+    height: 0.18,
+    x: 16.5,
+    y: UP_Y + 0.85,
+    z: -4.2,
+    yaw: 0.4,
+    minEyeY: 1.9,
+    shadow: 1,
+  },
+  // bed-old.glb for the child's room, out of the bedroom. Scale 1.0 at height 1.7557 — the fit is the file's
+  // own longest axis — so it is 0.786 wide by 1.756 long and 0.682 tall: a single bed, which is what put it
+  // in this room rather than the shrine. One mesh, so the file offers no headboard cue either way and the
+  // row keeps the bedroom's yaw 0, length along z.
+  //
+  // In the south-east corner, against the two walls this room owns. x 23.86 spans 23.467 .. 24.253 against
+  // the east facing's front at 24.29, and z -5.32 spans -6.198 .. -4.442 against the south facing's front at
+  // -6.24 — 3.7 and 4.2 cm of air, the same clearance every other wall-hugging row in the house is cut to.
+  // The west side is bare plaster at 18.7, because the attic store owns x 18.6 and faces that run from its
+  // own side; UP_CHILD_DOOR is cut through it at z -3.3 .. -4.7, so the bed stands five metres from the way
+  // in with nothing between. Reachable as a hiding place, which is the point of moving it: the collider's
+  // west face is at 23.507, a 0.35 m player gets their centre to 23.157, and that is 0.70 m from the
+  // interaction point against a reach of 1.763.
+  { name: 'bed-old.glb', height: 1.7557, x: 23.86, y: UP_Y, z: -5.32, minEyeY: 1.9, collide: true, albedo: 1.8, shadow: 1 },
+  // Bedside cabinet with animated door and drawer in the upper child's room.
+  {
+    name: 'cabinet-animated.glb',
+    id: 'cabinet-animated',
+    height: 0.85,
+    x: 22.8,
+    y: UP_Y,
+    z: -3.8,
+    yaw: -Math.PI / 2,
+    minEyeY: 1.9,
+    collide: true,
+    shadow: 1,
+  },
+  // bed-horror.glb for the shrine, also out of the bedroom, and the double goes in the largest of the three
+  // rooms: 9.73 x 4.34 of usable floor against the child's room's 5.59 x 4.15.
+  //
+  // `drop` takes the 4.44 x 4.44 m ground plane the file ships under the bed, exactly as it did downstairs.
+  // It is the longest axis in the file, so left in it would set the scale for everything — the bed would
+  // come out half size — and it would z-fight this room's floor across a third of it. What is left measures
+  // 2.224 x 0.840 x 1.149 with x longest, so height 2.224 is scale 1.0 and the row is the bedroom's number.
+  //
+  // Along the south wall, long side out. z -10.22 spans -10.795 .. -9.646 against the south facing's front
+  // at -10.84, and x 17.0 spans 15.888 .. 18.112, 1.33 m clear of the west facing at 14.56. UP_SHRINE_DOOR
+  // is at x 16.5 in the north wall, which the attic store owns and faces from its own side, so from in here
+  // that run is plaster at -6.5 and the bed is the first thing the room shows — a little over three metres
+  // ahead and slightly to the left, with 3.15 m of open floor between it and the doorway.
+  //
+  // Reachable too: the collider's north face is at -9.686, the player's centre comes to -9.336, and that is
+  // 0.88 m from the interaction point against a reach of 2.007. Neither bed takes an `id`, which is what
+  // keeps them hiding places at all — Hiding.ts matches BED_NAMES against the resolved id, and an id would
+  // resolve to something that is not a file name in that set.
+  { name: 'bed-horror.glb', drop: ['Floor'], height: 2.224, x: 17.0, y: UP_Y, z: -10.22, minEyeY: 1.9, collide: true, albedo: 1.8, shadow: 1 },
   // The main gate's leaf. Four meshes, no frame and no jambs in the file — which is why it can stand in
   // for the two barred leaves without disturbing anything: makeCasing() is still the frame and the three
   // locks are still procedural, on the wall's centre line where the puzzle needs them.
@@ -1180,6 +1713,12 @@ export interface ModelPropsHandles {
   startupReady: Promise<void>;
   /** Every placement has either landed or reported its own failure. */
   allReady: Promise<void>;
+  /**
+   * Pay every placed model's first-draw cost now, behind the title screen, instead of at the moment
+   * the player walks into it. See the comment on the implementation for what that cost is and why the
+   * cellar stair is where it used to land.
+   */
+  warm: (renderer: WebGLRenderer) => Promise<void>;
   update: (dt: number) => void;
   dispose: () => void;
 }
@@ -1193,7 +1732,71 @@ export interface ModelPropsHandles {
  * 20 m covers the longest sightline in the house, the 18 m hallway, and drops everything that is on
  * the far side of the map.
  */
-const CULL_RADIUS_SQ = 20 * 20;
+const CULL_RADIUS_SQ = 50 * 50;
+
+/**
+ * How near a `leaf` row's slab the eye may come before the row stops being drawn.
+ *
+ * The near plane is at 0.10 m, so a triangle closer than that is one the rasteriser will cut, and
+ * cutting a slab the eye is inside is the flicker. The rest is margin: the boxes trace the leaf's own
+ * diagonal in `leaf` steps, so between two steps they stand a centimetre or two off the slab, and the
+ * test below inflates a box rather than measuring a true distance. Both err toward hiding early, which
+ * is the safe direction.
+ *
+ * Measured over every collision-legal eye position round all fourteen leaves, standing and crouched, on
+ * a 5 cm grid: 0.18 m is where the count of positions that are inside the near plane with the leaf still
+ * drawn reaches nought. 0.15 m leaves one, at the upper shrine door; 0.10 m leaves eighty. This is that
+ * plus 2 cm, and it is deliberately not more — every centimetre here is a centimetre earlier that a
+ * doorway the player is walking through blinks.
+ */
+const LEAF_HIDE = 0.2;
+
+/** Is `q` inside any of `boxes`, each grown by `m`? See LEAF_HIDE. */
+function insideAny(boxes: AABB[], q: Vector3, m: number): boolean {
+  for (const b of boxes) {
+    if (
+      q.x > b.minX - m && q.x < b.maxX + m &&
+      q.y > b.minY - m && q.y < b.maxY + m &&
+      q.z > b.minZ - m && q.z < b.maxZ + m
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * The material slots warm() uploads. Written out rather than discovered by scanning every key on the
+ * material: `Object.values(mat)` would also hand back the render targets three keeps on some materials,
+ * and initTexture on one of those is not a no-op.
+ */
+const TEXTURE_SLOTS = [
+  'map', 'normalMap', 'roughnessMap', 'metalnessMap', 'aoMap', 'emissiveMap',
+  'alphaMap', 'bumpMap', 'displacementMap', 'specularMap', 'envMap', 'lightMap',
+] as const;
+
+/**
+ * Textures uploaded between yields. 16 keeps each slice near a frame's worth of work at the ~20 ms per
+ * texture a mid-range phone manages, so the title screen behind this keeps animating.
+ */
+const TEX_PER_SLICE = 16;
+
+/** Every distinct texture on every material under `root`, deduped — one material is shared by many meshes. */
+function collectTextures(root: Object3D): Texture[] {
+  const seen = new Set<Texture>();
+  root.traverse((o) => {
+    const mesh = o as Mesh;
+    if (mesh.material === undefined) return;
+    for (const m of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) {
+      const slots = m as unknown as Record<string, unknown>;
+      for (const k of TEXTURE_SLOTS) {
+        const t = slots[k];
+        if (t !== null && t !== undefined && (t as Texture).isTexture === true) seen.add(t as Texture);
+      }
+    }
+  });
+  return [...seen];
+}
 
 /**
  * Multiply every base colour under `root` by k, once per distinct material. See ModelPlacement.albedo.
@@ -1256,15 +1859,22 @@ function lanternLight(root: Object3D): number {
 }
 
 /**
- * See ModelPlacement.seal. Slate rather than black, so the sealed wall reads as a wall.
+ * See ModelPlacement.seal. The undertone the sealed shell is tinted with, under the plaster map that
+ * dressShell puts on it.
  *
- * Measured rather than picked. This material is 16.7k triangles with no map, and the flat's shell is
- * authored inward-facing, so it is not scenery seen from outside — it is the wall the player is looking
- * at: 37% of the frame at the flat's threshold and 57% two metres in, and nothing at all once past the
- * partition. At the 0x26262c it used to be, that is a third of the first two frames of the flat under
- * 8/255, which is the black the player reported, and no amount of albedo gain on the other twenty
- * materials touches it. At 0x4a4a52 the same frames read 31 and 35 mean with 1 to 2% black, in line
- * with the 30 to 57 the mapped materials come back at, and still well under the hall's 89.
+ * History, because it is the reason this file has a `seal` at all. `room-upper.glb` declares its
+ * 16.7k-triangle shell fully transparent with no map, so it arrives invisible; the flat is authored
+ * inward-facing, so that shell is not scenery seen from outside — it is the wall the player is looking
+ * at, 37% of the frame at the flat's threshold and 57% two metres in, and nothing at all once past the
+ * partition. Sealed opaque at the 0x26262c first chosen, a third of the first two frames of the flat sat
+ * under 8/255, which is the black the player reported. 0x4a4a52 took those frames to 31 and 35 mean with
+ * 1 to 2% black, in line with the 30 to 57 the mapped materials come back at.
+ *
+ * That fixed the brightness and left the defect: 276 m2 of vertical wall with no texture on it, beside
+ * the procedural plaster the rest of the storey wears. Which is why the flat colour is now a tint under
+ * a map rather than the surface itself — see dressShell. White, so the plaster reads at exactly the
+ * value HouseBuilder's own walls read at; the constant stays as the fallback for a shell whose geometry
+ * cannot take world UVs, and as the record of what was measured.
  */
 const SHELL_COLOUR = 0x4a4a52;
 
@@ -1350,6 +1960,10 @@ function curveAlbedo(root: Object3D, g: number, seal: boolean, gain = 1, lift = 
         lam.opacity = 1;
         lam.color.setHex(SHELL_COLOUR);
         lam.needsUpdate = true;
+        // Found here, dressed after the add: the map wants world-space UVs and this runs while the
+        // model is still outside the scene graph. dressShell reads this flag rather than repeating the
+        // four-part test, so there is one definition of "this is the shell".
+        lam.userData['sealed'] = true;
         continue;
       }
       // Past the `continue` above, so the gain never lands on the sealed shell: that one is a flat
@@ -1365,6 +1979,65 @@ function curveAlbedo(root: Object3D, g: number, seal: boolean, gain = 1, lift = 
   // Only the materials this call actually touched are candidates, so a second install — where every
   // one of them is already flagged and `mapped` comes back empty — cannot compound the lift.
   if (lift > 1) liftDarkestMap(mapped, lift);
+}
+
+/**
+ * Give the sealed shell the plaster the rest of the storey wears, tiled from where it stands in the
+ * world.
+ *
+ * This is the fix for the last of the reported "view glitches" upstairs, and the only one of the four
+ * that was never a renderer artefact. Measured on the device: the shell is 276.3 m2 of vertical wall
+ * over 9,221 triangles — a third of the frame at the flat's threshold — carrying `attrs
+ * [normal,position]`, no `uv` at all, and therefore no texture it could ever have worn. Round 2 gave
+ * the procedural walls brick-patched plaster and skirting, which is why this is the thing the player
+ * ended up pointing at: it did not get worse, everything beside it got better.
+ *
+ * Wearing HouseBuilder's own wallWarm map at WALL_TILE, through the same world-space UV convention, is
+ * what makes the seam disappear rather than merely be textured on both sides: a procedural wall and the
+ * .glb's wall that meet at a corner sample the same texel at the same point in the world, so the
+ * pattern runs straight through the join. Sharing the Texture and not the Material keeps the shell on
+ * the imported rung of the depth ladder — see HouseBuilder's bias() — so which surface wins a coplanar
+ * tie does not change, and it costs neither a draw call nor a second 1024 canvas.
+ *
+ * Must run after `group.add(root)`, for the reason wallColliders documents: the UV is computed from the
+ * world position and before the add there is no world. The vertices stay where the fit put them —
+ * worldUv takes the matrix and throws the transformed position away, because the fit's 5.604 is what
+ * the colliders and the clips are measured in.
+ *
+ * Idempotent per geometry and per material: ModelLoader hands the same cached Group to a second install
+ * and a second pass would be a second setAttribute on live buffers.
+ */
+function dressShell(root: Object3D, wallMap: Texture | null): number {
+  if (!wallMap) return 0;
+  let dressed = 0;
+  root.updateWorldMatrix(true, true);
+  // DRESS_SHELL_BODY
+  root.traverse((o) => {
+    const mesh = o as Mesh;
+    if (!mesh.isMesh) return;
+    const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+    const sealed = mats.filter((m) => (m as MeshLambertMaterial).userData['sealed'] === true);
+    // All-or-nothing, and normals required. A mesh that mixes the shell with a mapped material shares
+    // one uv attribute between them, so rewriting it would move the mapped half's texture; a mesh with
+    // no normals has no facing to choose a projection axis from. Either way it keeps SHELL_COLOUR and
+    // stays flat, which is the state this function improves on rather than depends on.
+    if (sealed.length === 0 || sealed.length !== mats.length) return;
+    if (!mesh.geometry.getAttribute('normal')) return;
+    if (mesh.geometry.userData['worldUv'] !== true) {
+      mesh.geometry.userData['worldUv'] = true;
+      worldUv(mesh.geometry, WALL_TILE, mesh.matrixWorld);
+      dressed++;
+    }
+    for (const m of sealed) {
+      const lam = m as MeshLambertMaterial;
+      if (lam.map === wallMap) continue;
+      lam.map = wallMap;
+      // White under the map, so the plaster reads at exactly the value HouseBuilder's walls read at.
+      lam.color.setHex(0xffffff);
+      lam.needsUpdate = true;
+    }
+  });
+  return dressed;
 }
 
 /**
@@ -1543,6 +2216,11 @@ interface Placed {
   minEyeY?: number;
   /** See ModelPlacement.maxEyeY. */
   maxEyeY?: number;
+  /**
+   * The boxes tracing a `leaf` row's slab, world space, measured once here because nothing moves these
+   * leaves. The cull below stops drawing the row while the eye is inside them.
+   */
+  leafKeep?: AABB[];
   mixer?: AnimationMixer;
   /**
    * This model's contact shadow, for rows that asked for one. Held here only so the cull below can
@@ -1613,6 +2291,10 @@ const LOOKAHEAD = 2;
  * `shadowMat` is the house's one contact-shadow material, from FixtureMats — passed in rather than
  * made here because the procedural dressing merges its shadows through the same instance, and two
  * instances of the same material is two draw calls for no reason. See ContactShadow.
+ *
+ * `wallMap` is HouseBuilder's warm plaster, for the one imported model that has to pass for part of the
+ * house rather than for something standing in it. See dressShell. Null disables that pass, which leaves
+ * the shell flat but correct.
  */
 export function installModels(
   loader: ModelLoader,
@@ -1620,6 +2302,7 @@ export function installModels(
   eye: Camera,
   aabbs: AABB[],
   shadowMat: MeshBasicMaterial,
+  wallMap: Texture | null,
   onError: (err: unknown, where: string) => void,
   onPlaced?: (name: string, root: Object3D, clips: AnimationClip[]) => void,
 ): ModelPropsHandles {
@@ -1627,6 +2310,8 @@ export function installModels(
   group.name = 'models';
   scene.add(group);
   const placed: Placed[] = [];
+  /** True only inside warm(), which needs the cull to stop fighting it. See there. */
+  let warming = false;
   /** Measured top of each placed model, for entries that stand on one. */
   const tops = new Map<string, number>();
   // Every panel the gate waits for, taken from the one flag that decides it rather than from a second
@@ -1686,6 +2371,8 @@ export function installModels(
           box = fitToBox(root, p.fit.width, p.fit.height, p.x, floor, p.z, p.fit.depth, p.yaw);
         } else {
           if (p.yaw !== undefined) root.rotation.y = p.yaw;
+          // After yaw, and both before the fit, which measures the box the two of them leave.
+          if (p.pitch !== undefined) root.rotation.x = p.pitch;
           box = fitToHeight(root, p.height, p.x, floor, p.z);
         }
         tops.set(id, floor + box.height);
@@ -1696,6 +2383,10 @@ export function installModels(
         if (p.albedo !== undefined) brighten(root, p.albedo);
         if (p.curve !== undefined) curveAlbedo(root, p.curve, p.seal === true, p.gain, p.lift);
         group.add(root);
+        // After the add, so the UV reads world space rather than the fit's local space — the same
+        // reason wallColliders is here and not above. Before the carve, so a doorway cut out of the
+        // shell removes triangles that are already anchored rather than leaving a strip that is not.
+        if (p.seal === true) dressShell(root, wallMap);
         // Before the slice, so a doorway cut into the model is a gap in its colliders for free.
         if (p.carve !== undefined) carveBoxes(root, p.carve);
         // After the add, so the slice reads world space rather than the fit's local space.
@@ -1707,7 +2398,12 @@ export function installModels(
           // furniture feel like they caught on air.
           aabbs.push(aabbOf(p.x, floor, p.z, box.width / 2 - 0.04, box.depth / 2 - 0.04, floor + box.height));
         }
+        // After the add and the fit, for the same reason as the two above: it reads matrixWorld. Over
+        // the whole root, since a `leaf` row is all leaf — and held, not pushed into `aabbs`, because
+        // this is a keep-out for the eye alone. See ModelPlacement.leaf.
+        const keep = p.leaf !== undefined ? leafBoxes([root], p.leaf) : undefined;
         const entry: Placed = { root, centre: new Vector3(p.x, floor + box.height / 2, p.z) };
+        if (keep !== undefined) entry.leafKeep = keep;
         if (p.shadow !== undefined) {
           const s = new Mesh(shadowGeo, shadowMat);
           s.name = `${id}:shadow`;
@@ -1743,17 +2439,76 @@ export function installModels(
   return {
     startupReady,
     allReady,
+    /**
+     * Link every shader and upload every texture once, before the player can move.
+     *
+     * The cull below is not free the first time it says yes: a model that has never been drawn owns
+     * shaders that have not been linked and maps that have not been uploaded, and both bills come due
+     * inside the single frame on which `visible` first goes true. Walking the cellar stair, that was two
+     * stalls of about 4x the frame budget, at exactly the two places they were reported — stepping off
+     * the landing at x -9.0, and two thirds of the way down at eye y -0.3, where `maxEyeY: -0.2` lets
+     * the whole basement wing in at once (five rows, +49 draw calls, +12k triangles, one frame).
+     *
+     * Both halves are needed, and measuring them separately is the only reason that is known. Revealing
+     * the set and calling compileAsync took the linked-program count from 21-at-spawn/24-after-the-stair
+     * to 29 before the player moves — and **moved neither spike**. The cost was the maps: uploading all
+     * 128 of them by hand dropped those same two samples from 4.1x and 4.2x the median frame to 1.7x and
+     * 1.3x, which is into the noise of every other step on the stair. compileAsync links a program
+     * without binding a map, and a render only binds what is inside the frustum it is given, so neither
+     * one covers this on its own.
+     *
+     * Sliced with a frame between batches because the upload is ~2.6 s of serial work on a software
+     * rasteriser: the title screen this hides behind is still animating, and a single blocking call
+     * there would be a visible hang instead of an invisible one.
+     *
+     * `warming` switches `update` off for the duration — it is awaited across frames, and the loop would
+     * otherwise put every root straight back to hidden between the reveal and the upload.
+     */
+    warm: async (renderer) => {
+      warming = true;
+      const was = placed.map((p) => p.root.visible);
+      try {
+        for (const p of placed) {
+          p.root.visible = true;
+          if (p.shadow !== undefined) p.shadow.visible = true;
+        }
+        await renderer.compileAsync(scene, eye);
+        const maps = collectTextures(scene);
+        for (let i = 0; i < maps.length; i++) {
+          renderer.initTexture(maps[i] as Texture);
+          if ((i + 1) % TEX_PER_SLICE === 0) {
+            await new Promise<void>((r) => {
+              requestAnimationFrame(() => r());
+            });
+          }
+        }
+        renderer.render(scene, eye);
+      } finally {
+        placed.forEach((p, i) => {
+          p.root.visible = was[i] ?? false;
+          if (p.shadow !== undefined) p.shadow.visible = was[i] ?? false;
+        });
+        warming = false;
+      }
+    },
     update: (dt) => {
+      // Held off while warm() has the set revealed on purpose; see there.
+      if (warming) return;
       for (const p of placed) {
         const near =
           p.centre.distanceToSquared(eye.position) < CULL_RADIUS_SQ &&
           (p.minEyeY === undefined || eye.position.y > p.minEyeY) &&
           (p.maxEyeY === undefined || eye.position.y < p.maxEyeY);
-        p.root.visible = near;
-        if (p.shadow !== undefined) p.shadow.visible = near;
+        // And not standing inside a door leaf: see ModelPlacement.leaf and LEAF_HIDE. The player walks
+        // through these, so this fires for a step or two as they cross a doorway, and the leaf is the
+        // whole of the view at that moment — which is the point. It is the only way the eye can be kept
+        // out of a slab that has to stay walkable.
+        const show = near && !(p.leafKeep !== undefined && insideAny(p.leafKeep, eye.position, LEAF_HIDE));
+        p.root.visible = show;
+        if (p.shadow !== undefined) p.shadow.visible = show;
         // A clip nobody can see is 100-odd channels of interpolation for nothing. It resumes where
         // it stopped, which for a looping idle nobody was watching is the same as having run.
-        if (near) p.mixer?.update(dt);
+        if (show) p.mixer?.update(dt);
       }
     },
     dispose: () => {

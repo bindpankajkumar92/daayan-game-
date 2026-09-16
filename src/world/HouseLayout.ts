@@ -102,6 +102,15 @@ export interface RoomSpec {
   /** Omit to leave the room open above (used for the tall stair shaft). */
   ceiling?: boolean;
   /**
+   * Rectangles to leave out of this room's *walkable* floor.
+   *
+   * Separate from the visual opening on purpose, and the separation is the bug this exists to fix: the
+   * upper storey's floor is drawn by `UPPER_PATCH` and decided by `houseFloors`, and cutting the hole
+   * in only the first of those left the player standing on thin air over the stairwell — the patch
+   * showed a hole, the collision said there was floor, and the two never met.
+   */
+  floorHoles?: Rect[];
+  /**
    * An imported model supplies this room's floor, so no plane is built for it — two surfaces a
    * centimetre apart z-fight. Walls still come from `walls`, which for such a room means the faces
    * the model leaves open plus `collideOnly` runs for the ones it draws itself.

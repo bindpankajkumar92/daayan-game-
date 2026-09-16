@@ -68,10 +68,25 @@ export interface RitualDoorsDeps {
   onOpen: () => void;
 }
 
+export interface RitualDoorsHandle {
+  /** The per-frame mixer tick the slide needs, null when the file arrived without its clip. */
+  tick: ((dt: number) => void) | null;
+  /**
+   * Slide the screen aside exactly as the player's own interaction would — blocker dropped,
+   * animation released, onOpen fired — idempotently, from anywhere.
+   *
+   * Exists for HouseScene's `noise:alert` path: a noise bar at maximum breaks the ritual seal even
+   * though the player is nowhere near the screen, and the opening has to look and behave the same
+   * as if they had stood there and slid it.
+   */
+  open: (toastMessage?: string) => void;
+}
+
 /**
- * Arm the screen and hold the doorway shut. Returns the per-frame tick the slide needs, or null when
- * the file arrived without its clip — in which case the doorway still opens, because a dead end in
- * front of the ritual room is worse than a screen that vanishes.
+ * Arm the screen and hold the doorway shut. Returns the per-frame tick the slide needs — null when
+ * the file arrived without its clip, in which case the doorway still opens, because a dead end in
+ * front of the ritual room is worse than a screen that vanishes — plus the `open` that lets
+ * something other than the player's hand slide it.
  *
  * Called from the placement hook: the fit's scale is on the root by then, and every number above is in
  * fitted units.
@@ -80,7 +95,7 @@ export function armRitualDoors(
   root: Object3D,
   clips: AnimationClip[],
   deps: RitualDoorsDeps,
-): ((dt: number) => void) | null {
+): RitualDoorsHandle {
   // One box filling the opening, held by reference and dropped below the world when the screen slides,
   // exactly as the flat's inner door does it. The shelf's collider used to *slide* 2.1 m instead, which
   // worked because a shelf is one solid; two leaves parting in opposite directions are not, and two
@@ -113,6 +128,28 @@ export function armRitualDoors(
   }
 
   let open = false;
+  /**
+   * The one way the doorway ever opens, whether the hand on the screen is the player's or the
+   * noise's. Everything that has to happen together lives here so the two callers cannot drift.
+   */
+  const openScreen = (toastMessage?: string): void => {
+    if (open) return;
+    open = true;
+    // Dropped below the world rather than spliced out: FPController ignores boxes that end under the
+    // player's feet, and the array it holds is shared.
+    block.minY = -60;
+    block.maxY = -59.8;
+    if (release === null) {
+      for (const name of LEAF_NAMES) {
+        const leaf = root.getObjectByName(name);
+        if (leaf) leaf.visible = false;
+      }
+    } else {
+      release();
+    }
+    deps.onOpen();
+    if (toastMessage !== undefined) deps.toast(toastMessage);
+  };
   deps.interact.add({
     id: 'basement.doors',
     // Just off the leaves' own face, at chest height, so the prompt belongs to the screen and not to
@@ -120,26 +157,9 @@ export function armRitualDoors(
     pos: new Vector3(-21.6, RITUAL_DOOR.bottom + 1.1, RITUAL_DOOR.z),
     reach: 2.0,
     label: () => (open ? null : 'Slide the screen aside'),
-    onUse: () => {
-      if (open) return;
-      open = true;
-      // Dropped below the world rather than spliced out: FPController ignores boxes that end under the
-      // player's feet, and the array it holds is shared.
-      block.minY = -60;
-      block.maxY = -59.8;
-      if (release === null) {
-        for (const name of LEAF_NAMES) {
-          const leaf = root.getObjectByName(name);
-          if (leaf) leaf.visible = false;
-        }
-      } else {
-        release();
-      }
-      deps.onOpen();
-      deps.toast('Cold air. There is a doorway behind it.');
-    },
+    onUse: () => openScreen('Cold air. There is a doorway behind it.'),
   });
 
   const tick = mixer;
-  return tick === null ? null : (dt) => tick.update(dt);
+  return { tick: tick === null ? null : (dt) => tick.update(dt), open: openScreen };
 }

@@ -35,6 +35,7 @@ import {
   AnimationMixer,
   Box3,
   Color,
+  LinearFilter,
   LinearMipmapLinearFilter,
   Mesh,
   MeshLambertMaterial,
@@ -116,27 +117,30 @@ function convert(src: Material, aniso: number): Shaded {
   m.vertexColors = src.vertexColors;
   m.opacity = src.opacity;
 
+  const isHair =
+    src.name.includes('Transparency') ||
+    src.name.includes('Eyelash') ||
+    src.name.toLowerCase().includes('hair');
+
   for (const tex of [m.map, m.emissiveMap, m.alphaMap, (m as MeshPhongMaterial).normalMap]) {
     if (!tex) continue;
     const t = tex as Texture;
     t.anisotropy = aniso;
-    // Anisotropy is meaningless on a texture that is not being minified through a mip chain, and one shipped
-    // file arrives that way: painting-sus.glb's 64x64 emissiveMap asks for NearestMipLinear/Nearest. So the
-    // minification filter is conformed here, next to where aniso is set, rather than left to whatever each
-    // artist's exporter happened to write -- otherwise the ANISOTROPY_CAP above is paid for and does nothing.
-    //
-    // Magnification is deliberately *not* touched. It is the one filter an artist can mean: this file is a
-    // 64x64 Minecraft painting, 7.8 x 14 mm per texel over its 0.50 x 0.90 m canvas, and pixel art forced to
-    // LinearFilter turns to mush rather than reading as crisp. Measured on the phone, LinearFilter cuts the
-    // canvas's hardest adjacent-pixel step from 198 luminance levels to 72; whether that is a fix or a
-    // smudge is a decision about the art, so it is made where the art is placed, not for every import here.
-    t.minFilter = LinearMipmapLinearFilter;
-    t.generateMipmaps = true;
+    if (isHair) {
+      // Hair cards must preserve thin strand coverage across distance:
+      // downscaled box-filtered mips erode thin strands to zero alpha, which caused the
+      // character to appear bald/see-through when viewed from across the room.
+      t.minFilter = LinearFilter;
+      t.generateMipmaps = false;
+    } else {
+      t.minFilter = LinearMipmapLinearFilter;
+      t.generateMipmaps = true;
+    }
     t.needsUpdate = true;
   }
 
   if (src.transparent && (std.map ?? std.alphaMap)) {
-    m.alphaTest = 0.35;
+    m.alphaTest = isHair ? 0.08 : 0.2;
     m.transparent = false;
     m.depthWrite = true;
   } else if (src.transparent) {
@@ -185,13 +189,15 @@ export class ModelLoader {
 
   /** Load `<MODEL_DIR><name>`, converting materials on the way through. Cached per name. */
   load(name: string): Promise<LoadedModel> {
-    const hit = this.cache.get(name);
+    const filename =
+      name === 'revopoint_inspire_-_strike_fist_-_767x203x154.glb' ? 'fist-left.glb' : name;
+    const hit = this.cache.get(filename);
     if (hit) return hit;
-    const p = this.loader.loadAsync(MODEL_DIR + name).then((gltf) => {
+    const p = this.loader.loadAsync(MODEL_DIR + filename).then((gltf) => {
       conform(gltf.scene, this.aniso);
       return { root: gltf.scene, clips: gltf.animations };
     });
-    this.cache.set(name, p);
+    this.cache.set(filename, p);
     return p;
   }
 

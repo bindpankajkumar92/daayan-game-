@@ -21,7 +21,8 @@ export type GameEventMap = {
   'resolution:change': { scale: number };
 
   // Phase 3+ events (declared now so the bus is typed end-to-end)
-  'noise:emitted': { pos: Vec3; radius: number; kind: 'footstep' | 'door' | 'object' | 'impact' };
+  'noise:emitted': { pos: Vec3; radius: number; kind: 'footstep' | 'door' | 'object' | 'impact' | 'cat' };
+  'noise:alert': { pos: Vec3; level: number };
   'item:collected': { id: EntityId; kind: 'key' | 'item' };
   'door:state': { id: EntityId; state: 'locked' | 'unlocked' | 'open' | 'closed' | 'slam' };
   'puzzle:solved': { id: EntityId };

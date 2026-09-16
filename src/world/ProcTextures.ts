@@ -236,7 +236,7 @@ export function makePlaster(seed = 4242, tint: 'warm' | 'cool' = 'warm'): Canvas
   const g = newCtx();
   const size = TEX_SIZE;
 
-  const base = tint === 'warm' ? [186, 168, 142] : [158, 160, 172];
+  const base = tint === 'warm' ? [84, 84, 86] : [72, 74, 78];
   g.fillStyle = `rgb(${base[0]},${base[1]},${base[2]})`;
   g.fillRect(0, 0, size, size);
 
@@ -245,11 +245,11 @@ export function makePlaster(seed = 4242, tint: 'warm' | 'cool' = 'warm'): Canvas
     const x = rand() * size;
     const y = rand() * size;
     const r = (18 + rand() * 90) * PX;
-    const shift = (rand() - 0.5) * 34;
+    const shift = (rand() - 0.5) * 20;
     const grad = g.createRadialGradient(x, y, 0, x, y, r);
     grad.addColorStop(
       0,
-      `rgba(${clamp255((base[0] ?? 0) + shift)},${clamp255((base[1] ?? 0) + shift)},${clamp255((base[2] ?? 0) + shift)},0.30)`,
+      `rgba(${clamp255((base[0] ?? 0) + shift)},${clamp255((base[1] ?? 0) + shift)},${clamp255((base[2] ?? 0) + shift)},0.25)`,
     );
     grad.addColorStop(1, 'rgba(0,0,0,0)');
     tileable(g, around(x, y, r), () => {
@@ -258,24 +258,23 @@ export function makePlaster(seed = 4242, tint: 'warm' | 'cool' = 'warm'): Canvas
     });
   }
 
-  // Damp/water stains — brownish. Spread over the whole tile rather than biased to the top:
-  // on a tiling wall a top-biased feature draws a horizontal stripe at every repeat.
-  for (let i = 0; i < 5; i++) {
+  // Damp/water stains — dark grunge.
+  for (let i = 0; i < 6; i++) {
     const x = rand() * size;
     const y = rand() * size;
     const r = (40 + rand() * 70) * PX;
     const grad = g.createRadialGradient(x, y, 0, x, y, r);
-    grad.addColorStop(0, 'rgba(96,74,46,0.34)');
-    grad.addColorStop(0.6, 'rgba(96,74,46,0.14)');
-    grad.addColorStop(1, 'rgba(96,74,46,0)');
+    grad.addColorStop(0, 'rgba(40,40,40,0.30)');
+    grad.addColorStop(0.6, 'rgba(40,40,40,0.12)');
+    grad.addColorStop(1, 'rgba(40,40,40,0)');
     tileable(g, around(x, y, r), () => {
       g.fillStyle = grad;
       g.fillRect(x - r, y - r, r * 2, r * 2);
     });
   }
 
-  // Hairline cracks — short branching polylines.
-  g.strokeStyle = 'rgba(70,58,44,0.5)';
+  // Hairline cracks — subtle distress.
+  g.strokeStyle = 'rgba(45,45,45,0.35)';
   for (let c = 0; c < 7; c++) {
     const x0 = rand() * size;
     const y0 = rand() * size;

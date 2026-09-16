@@ -44,6 +44,17 @@ export interface HidingHandles {
   /** Arm procedural furniture from its known world box. */
   addBox: (id: string, kind: HidingKind, bounds: Box3) => void;
   isHidden: () => boolean;
+  /**
+   * Every registered hiding spot, as a usable position and an id.
+   *
+   * Added for the AI, which needs to know *where a player could be hiding* in order to search for
+   * them (§14 requires the search to check hiding places). The accessible `use` point is the one
+   * exposed rather than the `pocket`, deliberately: a search should walk up to the wardrobe and look
+   * inside it, not climb into the geometry, and `use` is the point the player themselves walks to.
+   *
+   * Read-only copies, so a caller cannot move a spot that the interaction layer still holds.
+   */
+  getSpots: () => readonly { id: string; kind: HidingKind; use: Vector3 }[];
   dispose: () => void;
 }
 
@@ -63,6 +74,8 @@ export function armHiding(deps: HidingDeps): HidingHandles {
   let exitPitch = 0;
   let active: Spot | null = null;
   const ids: string[] = [];
+  /** Every spot ever registered, so the AI can enumerate them without re-deriving them. */
+  const spots: Spot[] = [];
 
   // A screen-space silhouette supplies the enclosure the camera cannot get from a model alone. It is
   // plain gradients, not backdrop-filter, so it does not read the WebGL framebuffer back every frame.
@@ -127,6 +140,7 @@ export function armHiding(deps: HidingDeps): HidingHandles {
           : new Vector3(centre.x, Math.min(bounds.max.y - 0.25, bounds.min.y + 1.35), centre.z),
       reach: Math.max(size.x, size.z) * 0.52 + 0.85,
     };
+    spots.push(spot);
 
     interact.add({
       id,
@@ -163,6 +177,7 @@ export function armHiding(deps: HidingDeps): HidingHandles {
     onPlaced,
     addBox,
     isHidden: () => active !== null,
+    getSpots: () => spots.map((s) => ({ id: s.id, kind: s.kind, use: s.use })),
     dispose: () => {
       if (active !== null) leave();
       for (const id of ids) interact.remove(id);

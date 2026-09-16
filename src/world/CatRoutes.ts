@@ -51,14 +51,20 @@ const GROUND: readonly (readonly [string, number, number])[] = [
   ['hw_nook', 8.3, 0.6],
   // Bedroom. bd_window is the west wall under the window; bd_north clears the foot of the bed.
   //
-  // The north rail is at x = -4.17, not the -3.6 it ran at before the room was furnished. bed-horror
-  // now occupies x -3.87 .. -1.73 across z 7.87 .. 8.93, which put a bed across the middle of that
-  // rail: checkRoutes() unlinked bd_mid-bd_north on load, and because bd_north's only edge is that
-  // one, the whole north half of the room went unreachable and the drop surfaced as a player-facing
-  // error line. -4.17 is the centre of the one gap that survives — the bed's west face at -3.87 and a
-  // 0.48 m chest at x -4.94 .. -4.46 / z 9.06 .. 9.54 pinch it to 0.59 m, which clears the cat's 0.30 m
-  // width by 0.145 m a side. Measured by sweeping the rail at 0.2 m steps: every x from -3.0 to -4.0
-  // hits the bed, -4.4 to -5.0 hit the chest, and only -4.2 and a second slot at -5.2 pass at all.
+  // The north rail is at x = -4.17, not the -3.6 it ran at before the room was furnished, and it stays
+  // there even though half the reason has gone. bed-horror used to occupy x -3.87 .. -1.73 across
+  // z 7.87 .. 8.93, a bed laid across the middle of that rail: checkRoutes() unlinked bd_mid-bd_north on
+  // load, bd_north's only edge is that one, so the whole north half of the room went unreachable and the
+  // drop surfaced as a player-facing error line. -4.17 was the centre of the one gap that survived — the
+  // bed's west face at -3.87 and the 0.48 m bedside table at x -4.94 .. -4.46 / z 9.06 .. 9.54 pinched it
+  // to 0.59 m, which clears the cat's 0.30 m width by 0.145 m a side. Measured by sweeping the rail at
+  // 0.2 m steps: every x from -3.0 to -4.0 hit the bed, -4.4 to -5.0 hit the table, and only -4.2 and a
+  // second slot at -5.2 passed at all.
+  //
+  // That bed is in the shrine now, so the only thing left on the rail is the bedside table and the gap is
+  // open from -4.46 east to the far wall. The nodes are left where they were measured on purpose: widening
+  // a gap cannot break a route, checkRoutes() has nothing left to unlink here, and a rail put back to -3.6
+  // would be a second set of numbers nobody has swept.
   ['bd_thr', -4.6, 2.6],
   ['bd_in', -4.6, 3.6],
   ['bd_mid', -4.17, 6.0],
@@ -75,8 +81,8 @@ const GROUND: readonly (readonly [string, number, number])[] = [
   ['lv_ne', 5.0, 9.3],
   ['lv_nw', 3.4, 9.3],
   ['lv_c', 3.4, 6.4],
-  ['lv_w', 0, 5.0],
-  ['lv_sw', 0, 3.4],
+  ['lv_w', 1.4, 5.2],
+  ['lv_sw', 1.4, 3.6],
 ];
 
 /** [name, x, z] in the basement wing at y = BASE_Y. */
@@ -84,6 +90,7 @@ const BASEMENT: readonly (readonly [string, number, number])[] = [
   ['bs_in', -14.8, 1.05],
   ['bs_bench', -16.4, -0.6],
   ['bs_mid', -19.0, 1.0],
+  ['bs_tbl_w', -20.5, 3.0],
   // The cellar's west end, where the push-aside shelf used to stand. bs_screen is the second node, in
   // front of the sliding screen and on the doorway's own centreline, because the approach has to be
   // square to the opening: the parked leaves sit at x -21.82..-21.72 and carry no collider of their
@@ -172,7 +179,7 @@ export const CAT_CHAINS: readonly string[] = [
   // crates now sit against the south wall (HouseProps.basement), because they were closing the player's
   // way to the black room's doorway as well. Swept again at 0.15 over the cat's own y band: the whole
   // segment is clear, and it passes half a metre south of the model's workbench at its closest.
-  'bs_in bs_n_e bs_n_w bs_mid',
+  'bs_in bs_n_e bs_n_w bs_tbl_w bs_mid',
   'rt_thr rt_in rt_altar_e',
   'rt_in rt_se rt_sw rt_nw rt_ne rt_in',
 ];

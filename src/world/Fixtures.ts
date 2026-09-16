@@ -41,6 +41,15 @@ export interface FixtureMats {
   glow: MeshBasicMaterial;
   paper: MeshLambertMaterial;
   /**
+   * The hidden door's lock plate.
+   *
+   * The one deliberately saturated surface in the house. Everything else here is desaturated on
+   * purpose — the palette's reds are `0x4a1418` cloth and nothing else — so this is the only object
+   * that reads as a colour rather than a tone, which is the point: it is a lock the player has to
+   * notice across a dark corridor, and it is meant to look wrong in the room it is in.
+   */
+  red: MeshLambertMaterial;
+  /**
    * The contact-shadow multiply. In here rather than built where it is used because both users are
    * elsewhere — the procedural dressing merges its shadows through Batch, the imported models add one
    * quad each — and they have to be the *same* material instance or the merge stops being one draw.
@@ -63,11 +72,27 @@ export function makeFixtureMats(
     dark: track(new MeshLambertMaterial({ color: 0x14131a })),
     glow: track(new MeshBasicMaterial({ color: 0xffb457 })),
     paper: track(new MeshLambertMaterial({ color: 0xcdc3a8 })),
+    red: track(new MeshLambertMaterial({ color: 0xa8201c })),
     // Both tracked: Material.dispose() does not touch its map, so the texture needs its own entry or
     // the canvas and its GPU copy outlive the scene.
     shadow: track(makeContactShadowMaterial(track(makeContactShadowTexture()))),
   };
 }
+
+/**
+ * Largest edge, in metres, allowed on a box's *triangle* — the same number and the same reason as
+ * Batch's QUAD and HouseBuilder's SLAB_SEG: a triangle big enough to put a vertex on the camera
+ * plane loses its 1/w interpolation and its depth comes out metres wrong, punching a black wedge
+ * through the surface. A casing jamb is 2.1-2.45 m tall and a lintel spans the opening, so every
+ * doorway's frame was two-triangle-tall and wide enough to fail. Merged into one mesh by
+ * `mergeStaticChildren`, they were the one family of procedural geometry that never passed through
+ * the bound — Batch.box subdivides, but these were built with a bare BoxGeometry.
+ *
+ * The sqrt(2) is the quad diagonal, same as in Batch: the bound that matters is the triangle's
+ * longest edge, and a quad's diagonal is sqrt(2) times its side.
+ */
+const QUAD = 1;
+const segs = (n: number): number => Math.max(1, Math.ceil((n * Math.SQRT2) / QUAD));
 
 /** Box helper: a mesh at a world position, with the AABB that matches it if one is wanted. */
 export function boxMesh(
@@ -79,13 +104,155 @@ export function boxMesh(
   y: number,
   z: number,
 ): Mesh {
-  const m = new Mesh(new BoxGeometry(w, h, d), mat);
+  const m = new Mesh(new BoxGeometry(w, h, d, segs(w), segs(h), segs(d)), mat);
   m.position.set(x, y, z);
   return m;
 }
 
 export function aabbOf(x: number, y0: number, z: number, hw: number, hd: number, y1: number): AABB {
   return { minX: x - hw, maxX: x + hw, minY: y0, maxY: y1, minZ: z - hd, maxZ: z + hd };
+}
+
+/**
+ * A door leaf's keep-out, as `segs` boxes stepped along the leaf's own width.
+ *
+ * This is the collider half of the wedge described above QUAD. Bounding a triangle's edge cannot help
+ * once the eye is *inside* the slab, because then the near plane cuts the triangle whatever its edge
+ * length: measured live, a 0.55 m triangle spanning w 0.000..0.427 — a 10554x ratio — fails exactly
+ * as a 5 m one would, with the eye 0.070 m from the nearest vertex and 0.401 m past the front face.
+ * Hiding the leaf takes the flicker from 494 flipped pixels to 0, so the leaf is the whole of it.
+ *
+ * The house never kept a head out of its leaves. ModelProps states the policy — "ajar, no blocker, no
+ * interaction" — and both swinging doors state it again: "a swinging leaf has no collider of its own".
+ * Thirteen of the fourteen leaves let a collision-legal eye reach 0.000-0.003 m of a triangle, 53 to
+ * 76 grid points each inside the 0.1 m near plane. Doors are the only geometry in the house a player
+ * can walk into, which is why every report of this artefact was at a doorway.
+ *
+ * Why not one box. A leaf standing ~57 degrees across its opening has a 0.71 x 0.99 m footprint, and
+ * collidesAabb inflates a box by the player's radius on each axis independently, so one box round that
+ * leaves 0.14 m of lateral freedom in a 1.4 m doorway — passable on paper and horrible to walk
+ * through. Stepping the same slab along its own length keeps the box narrow at the hinge end, which is
+ * where the player crosses the wall plane.
+ *
+ * Measured off world vertices rather than off the placement row, for the reason wallColliders is: a
+ * row says a yaw and a height, and what those become after the fit is a question for matrixWorld.
+ * Which also means this can be re-run on a leaf that has swung, and the boxes will follow it.
+ */
+export function leafBoxes(parts: Object3D[], segs = 4): AABB[] {
+  const pts: number[] = [];
+  const v = new Vector3();
+  for (const part of parts) {
+    part.updateWorldMatrix(true, true);
+    part.traverse((o) => {
+      const mesh = o as Mesh;
+      if (!mesh.isMesh) return;
+      const pos = mesh.geometry.getAttribute('position');
+      for (let i = 0; i < pos.count; i++) {
+        v.fromBufferAttribute(pos, i).applyMatrix4(mesh.matrixWorld);
+        pts.push(v.x, v.y, v.z);
+      }
+    });
+  }
+  const n = pts.length / 3;
+  if (n < 3) return [];
+  // `?? 0` on every read, as wallColliders does with its own flat run of coordinates: the index is
+  // always in range here, and noUncheckedIndexedAccess does not know that.
+  const at = (i: number, k: number): number => pts[i * 3 + k] ?? 0;
+  let yLo = Infinity, yHi = -Infinity, cx = 0, cz = 0;
+  for (let i = 0; i < n; i++) {
+    cx += at(i, 0);
+    cz += at(i, 2);
+    const y = at(i, 1);
+    if (y < yLo) yLo = y;
+    if (y > yHi) yHi = y;
+  }
+  cx /= n;
+  cz /= n;
+  // Two passes for the planar diameter — farthest from the centroid, then farthest from that. The axis
+  // to step along is the leaf's own long one, and on these rows it is never a world axis: the yaws are
+  // 1.0 rad and its reflections, so the slab lies about 57 degrees across its opening.
+  const far = (fx: number, fz: number): number => {
+    let best = -1, hit = 0;
+    for (let i = 0; i < n; i++) {
+      const dx = at(i, 0) - fx, dz = at(i, 2) - fz;
+      const d2 = dx * dx + dz * dz;
+      if (d2 > best) { best = d2; hit = i; }
+    }
+    return hit;
+  };
+  const a = far(cx, cz);
+  const ax = at(a, 0), az = at(a, 2);
+  const b = far(ax, az);
+  const bx = at(b, 0), bz = at(b, 2);
+  const len = Math.hypot(bx - ax, bz - az);
+  if (!(len > 1e-4)) return [];
+  const ux = (bx - ax) / len, uz = (bz - az) / len;
+
+  const step = len / segs;
+  // Overlapping windows. A step whose extent came only from the vertices strictly inside it would leave
+  // a gap wherever the slab is sparsely tessellated, and a keep-out with a gap in it is not one.
+  const pad = step * 0.2;
+  const out: AABB[] = [];
+  for (let k = 0; k < segs; k++) {
+    const t0 = k * step - pad, t1 = (k + 1) * step + pad;
+    let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+    for (let i = 0; i < n; i++) {
+      const px = at(i, 0), pz = at(i, 2);
+      const t = (px - ax) * ux + (pz - az) * uz;
+      if (t < t0 || t > t1) continue;
+      if (px < x0) x0 = px;
+      if (px > x1) x1 = px;
+      if (pz < z0) z0 = pz;
+      if (pz > z1) z1 = pz;
+    }
+    if (x0 > x1) continue;
+    out.push({ minX: x0, maxX: x1, minY: yLo, maxY: yHi, minZ: z0, maxZ: z1 });
+  }
+  return out;
+}
+
+/**
+ * The same keep-out, on a leaf that swings. Pushes the boxes for where the leaf is now and returns the
+ * tick to call while it turns: it re-measures and writes the new numbers into the boxes already pushed,
+ * because FPController holds the array by reference and splicing it mid-frame is worse. Returns true
+ * from that tick once every box has caught up.
+ *
+ * The guard is why this is not just "call leafBoxes again on each tween step". FPController has no
+ * depenetration — moveAxis rejects a move that ends inside a box and there is nothing that pushes a
+ * player out of one — so a box that appears around someone already standing there rejects every
+ * direction they try and they are stuck in a doorway. A door swings through exactly the spot the player
+ * who opened it is standing in. So a box that would land on the player is left where it was and tried
+ * again on the next tick, and the caller keeps ticking until this returns true.
+ */
+export function trackLeaf(
+  parts: Object3D[],
+  aabbs: AABB[],
+  player: { position: Vector3; getRadius(): number },
+  segs = 4,
+): () => boolean {
+  const live = leafBoxes(parts, segs);
+  for (const b of live) aabbs.push(b);
+  return (): boolean => {
+    const next = leafBoxes(parts, segs);
+    if (next.length !== live.length) return true;
+    const r = player.getRadius();
+    const px = player.position.x, pz = player.position.z;
+    let done = true;
+    for (let i = 0; i < live.length; i++) {
+      const a = live[i], b = next[i];
+      if (a === undefined || b === undefined) continue;
+      if (a.minX === b.minX && a.maxX === b.maxX && a.minZ === b.minZ && a.maxZ === b.maxZ) continue;
+      // Horizontal only, and deliberately conservative: the leaf spans the whole doorway height, so
+      // anyone on this storey is within its y band, and erring toward not moving the box costs a frame
+      // of lag while erring the other way costs the player their freedom of movement.
+      if (px + r > b.minX && px - r < b.maxX && pz + r > b.minZ && pz - r < b.maxZ) {
+        done = false;
+        continue;
+      }
+      Object.assign(a, b);
+    }
+    return done;
+  };
 }
 
 /** Free every geometry under a group. Materials are shared and disposed by their owner. */
@@ -168,6 +335,19 @@ export interface CasingSpec {
   y0: number;
   y1: number;
   thickness: number;
+  /**
+   * Draw the threshold box under the opening. Defaults to true for any opening that starts clear of
+   * the floor, which is what a window wants; pass false for a doorway you walk through.
+   *
+   * It exists because the alternative callers reached for was to sink the sill out of sight by pulling
+   * `y0` down by exactly the sill's own height. That lands its top face *on* the floor plane rather
+   * than under it — measured at the upper wing's doorways it was 0 um from `up-store-floor` and
+   * `up-child-floor`, three upward faces at 2.40000 exactly — and two coincident planes are the one
+   * case a depth buffer cannot call, so which of them showed changed with the camera. A 1.4 x 0.34 m
+   * box of `mats.wood` flickering in and out of the floorboards is the brown band across the
+   * threshold in the report. Not drawing it is cheaper than hiding it and cannot come back.
+   */
+  sill?: boolean;
 }
 
 /**
@@ -180,18 +360,19 @@ export function makeCasing(mats: FixtureMats, s: CasingSpec): Group {
   const t = s.thickness + 0.06;
   const jw = 0.075;
   const h = s.y1 - s.y0;
+  const sill = s.sill !== false && s.y0 > 0.02;
   if (s.axis === 'x') {
     for (const dx of [-(s.half - jw / 2), s.half - jw / 2]) {
       g.add(boxMesh(mats.wood, jw, h, t, s.x + dx, s.y0 + h / 2, s.z));
     }
     g.add(boxMesh(mats.wood, s.half * 2, 0.12, t, s.x, s.y1 - 0.06, s.z));
-    if (s.y0 > 0.02) g.add(boxMesh(mats.wood, s.half * 2, 0.1, t + 0.16, s.x, s.y0 + 0.05, s.z));
+    if (sill) g.add(boxMesh(mats.wood, s.half * 2, 0.1, t + 0.16, s.x, s.y0 + 0.05, s.z));
   } else {
     for (const dz of [-(s.half - jw / 2), s.half - jw / 2]) {
       g.add(boxMesh(mats.wood, t, h, jw, s.x, s.y0 + h / 2, s.z + dz));
     }
     g.add(boxMesh(mats.wood, t, 0.12, s.half * 2, s.x, s.y1 - 0.06, s.z));
-    if (s.y0 > 0.02) g.add(boxMesh(mats.wood, t + 0.16, 0.1, s.half * 2, s.x, s.y0 + 0.05, s.z));
+    if (sill) g.add(boxMesh(mats.wood, t + 0.16, 0.1, s.half * 2, s.x, s.y0 + 0.05, s.z));
   }
   mergeStaticChildren(g);
   return g;
@@ -246,6 +427,59 @@ export function makeGate(mats: FixtureMats, x: number, z: number): BuiltGate {
   // The brass bolts slide independently when their keys turn; plates and hasps do not.
   mergeStaticChildren(group, bolts);
   return { group, bolts, lockAnchors };
+}
+
+export interface BuiltHiddenLock {
+  group: Group;
+  /** The red plate, returned so the unlock can swing it aside. */
+  plate: Mesh;
+  /** Where the interaction anchors, standing off the plate along the way it faces. */
+  anchor: Vector3;
+}
+
+/**
+ * The red lock on the hidden door.
+ *
+ * One plate rather than the gate's three bolts, because the whole of what makes this read is that
+ * there is exactly one of it and it is the only red thing in the house. It is also larger than the
+ * gate's 0.3 x 0.26: those are seen across the hall with the porch light behind them, while this one is
+ * seen from a metre away in a corridor with no window in it, and a lock nobody notices is not a lock.
+ *
+ * The iron frame behind the plate is not decoration. A flat saturated quad on a dark leaf reads as a
+ * missing texture — which is exactly how the door was reported before this existed — so the red is
+ * inset into something with an edge and a thickness, and that edge is what says "object".
+ *
+ * `yaw` is the direction the plate faces, so the anchor can be derived from it rather than stated
+ * twice: the interaction has to stand in front of the lock, not inside the door.
+ */
+export function makeHiddenLock(
+  mats: FixtureMats,
+  x: number,
+  y: number,
+  z: number,
+  yaw: number,
+): BuiltHiddenLock {
+  const group = new Group();
+
+  const frame = boxMesh(mats.iron, 0.44, 0.44, 0.055, 0, 0, -0.035);
+  group.add(frame);
+
+  const plate = boxMesh(mats.red, 0.34, 0.34, 0.075, 0, 0, 0.005);
+  group.add(plate);
+
+  // A hasp hanging under the plate, so the lock reads as fastened rather than as a sign.
+  const hasp = new Mesh(new TorusGeometry(0.07, 0.017, 5, 12, Math.PI), mats.iron);
+  hasp.position.set(0, -0.245, 0.02);
+  hasp.rotation.z = Math.PI;
+  group.add(hasp);
+
+  group.position.set(x, y, z);
+  group.rotation.y = yaw;
+  // Facing yaw maps +z to (sin, 0, cos), so the stand-off follows the same two numbers the group does.
+  const anchor = new Vector3(x + Math.sin(yaw) * 0.45, y, z + Math.cos(yaw) * 0.45);
+
+  mergeStaticChildren(group, [plate]);
+  return { group, plate, anchor };
 }
 
 export type SymbolKind = 'moon' | 'eye' | 'cross' | 'skull';

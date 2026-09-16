@@ -15,13 +15,11 @@
  *   this file is the only owner of either file, which is also why it may edit their materials in
  *   place.
  *
- * - **The arms are posed by their own rest pose, and anchored by their grip rather than by a box.**
- *   arms.glb is a 47-joint rig whose stored rest rotations already curl the fingers, so it is drawn
- *   with no AnimationMixer at all and the fist costs nothing — which is also exactly what "without
- *   animation" asked for. What it costs instead is that neither the scale nor the position can come
- *   from fitToHeight: the *posed* box is longest on x (57.199 rig units against 56.151 on z), so a
- *   longest-axis fit would normalise the shoulder span rather than the arm, and the box centre lands
- *   in the forearms rather than in the hand. Both are read off the bones — see PALM_SPAN, GRIP_BONES.
+ * - **The left hand is anchored by its grip rather than by a bounding box.**
+ *   revopoint_inspire_-_strike_fist_-_767x203x154.glb (shipped as fist-left.glb) is a high-resolution
+ *   3D photogrammetry scan of a clenched left fist and forearm. The grip tunnel formed by the fingers
+ *   is centered at the pivot point of the lantern handle, and the forearm is oriented so it recedes
+ *   into the bottom-left corner of the screen across the near plane.
  *
  * - **The lantern hangs; it is not glued on.** It is not a child of the hand. It pivots at the top of
  *   its own carry handle and is held plumb *in world space* every frame, which is the whole
@@ -39,41 +37,34 @@
 import {
   AdditiveBlending,
   CanvasTexture,
+  Color,
   FrontSide,
   Group,
+  MathUtils,
   Mesh,
   MeshBasicMaterial,
+  MeshLambertMaterial,
+  MeshPhongMaterial,
   PlaneGeometry,
+  PointLight,
   Quaternion,
   Vector3,
   type Camera,
-  type MeshLambertMaterial,
-  type MeshPhongMaterial,
   type Object3D,
 } from 'three';
 import { globalBus } from '@/core/EventBus';
 import { fitToHeight, type ModelLoader } from '@/world/ModelLoader';
 
 /**
- * Where the *fist* sits in camera space — which is also the pendulum's pivot, and therefore the top of
+ * Where the left fist sits in camera space — which is also the pendulum's pivot, and therefore the top of
  * the lantern's carry handle. Nothing is centred here: the arm reaches up to it and the lantern hangs
  * down from it.
  *
- * Bounded on three sides at once, which is why these are not round numbers. The field of view is 70
- * degrees *vertical* (Engine), so the visible half-height is 0.700 x distance and the half-width is
- * that times the 2.1:1 landscape aspect: at z = -0.27 the frame is +/-0.189 m tall and +/-0.397 wide.
- * The lantern hangs LANTERN_SIZE below the pivot, so y = -0.045 puts its base at -0.215 and the lowest
- * 2.6 cm of the fount is cropped by the bottom edge — deliberate, and the same crop every game gives a
- * carried light. The other bound is the controller's 0.35 m collision radius, which has no
- * depenetration, so the camera can rest exactly that far from a wall face and anything past it draws
- * inside the plaster: the deepest geometry here is the knuckles at -0.312, just past the lantern's far
- * face at -0.300, leaving about 3.8 cm of margin for SWING.max to swing into. The near plane is 0.1,
- * and the arm crosses it at x = 0.174..0.253 where the frame is only 0.147 wide, so the cross-section is
- * off the right edge and there is no hollow forearm in the corner. That last one is what x is really
- * for; moving x inward re-opens it. (These are measured on the shipped rig; a re-export moves them,
- * which is why the numbers are written down rather than trusted.)
+ * Situated on screen-left (x = -0.185) so the lantern hangs naturally inside the frame,
+ * the base is partially cropped by the bottom edge (y = -0.065), and the forearm angles
+ * across the near plane into the bottom-left corner with no cut-off stump visible.
  */
-const HOLD = { x: 0.185, y: -0.045, z: -0.27 };
+const HOLD = { x: -0.205, y: -0.068, z: -0.30 };
 
 /**
  * Metres along the lantern's longest axis — which is what fitToHeight normalises, not the height.
@@ -87,76 +78,28 @@ const LANTERN_SIZE = 0.17;
  * Where the hand grips the lantern, as a fraction of its fitted height above its base. fitToHeight
  * seats the box *bottom* at the y it is given, so the body then slides down by exactly this much and
  * the grip lands on the pivot.
- *
- * Read off `glb-pose --profile`, which prints the silhouette slab by slab. On the model's own -1..+1
- * box there is a narrow tab at y +0.93..+1.00, a wide inverted-U from +0.61..+0.90, and an empty slab
- * at +0.536 under the arch. So the tab is a hanging hook, the U is the carry handle, and a hand grips
- * the handle at its top — local y +0.90, which is 0.95 of the way up a 2.0-tall box. Gripping the
- * bounding-box top instead would leave the lantern floating 1.7 cm under the fist with the handle
- * passing through the fingers, and the hook is *meant* to stand up out of the fist.
  */
 const PIVOT_FRAC = 0.95;
 
 /**
- * The one dial that scales the whole rig: the width of the back of the hand in metres, index knuckle
- * to little knuckle.
+ * Left hand viewmodel configuration:
+ * Sourced from revopoint_inspire_-_strike_fist_-_767x203x154.glb (shipped as fist-left.glb).
+ * A high-detail photogrammetry 3D scan of a clenched left fist and forearm in millimetre units.
  *
- * An anatomical measurement rather than a bounding box, because the bounding box of a two-arm rig is
- * the shoulder span and normalising *that* makes the hand come out whatever size is left over. The
- * knuckles are read live from the two bones below, so this stays correct if the art is ever re-exported
- * at another scale. 0.056 is about two-thirds of a real hand: at full size the fist is twice as
- * wide as this lantern's 4 cm handle and swallows it, and shrinking the hand rather than growing the
- * lantern is what keeps the lantern inside the frame (see HOLD).
- *
- * It was 0.062, then 0.056, and came down a further 7% on report that the hand still read slightly too
- * large. That is a safe direction and only a small one: every clearance in HOLD is a *maximum* the rig
- * must stay inside — the near-plane crossing, the 3.5 cm of wall margin, the bottom-edge crop — so a
- * smaller hand loosens all three at once, and the fist is still wider than the handle it is closed
- * around. Going much below this starts to read as a child's hand rather than as a distant one, since
- * perspective is fixed by HOLD.z.
+ * GRIP_OFFSET: The center of the cylindrical grip tunnel inside the clenched fingers in model units (mm).
+ * FIST_ROTATION: Euler angles (degrees) orienting the fist so the handle runs through the curled fingers
+ * and the forearm recedes down and into the screen's bottom-left corner.
+ * FIST_SCALE: Scale factor from millimeters to meters (~8cm knuckles).
  */
-const PALM_SPAN = 0.052;
-const SPAN_BONES: readonly [string, string] = ['R_point1_030', 'R_pink1_042'];
-/** The span these two bones measure in the shipped file, if the rig is ever renamed under us. */
-const SPAN_FALLBACK = 7.148;
+const GRIP_OFFSET = { x: -205, y: 65, z: 24 };
+const FIST_ROTATION = { x: 5, y: 72, z: -12 };
+const FIST_SCALE = 0.00092;
 
-/**
- * The eight bones whose mean is the centre of the curled fingers — the first and third joint of each
- * of the four digits. Their mean is [-16.75, -5.35, 28.55] in rig units, which is the point that gets
- * pinned to HOLD.
- *
- * Averaging both joint rows rather than taking the knuckles alone matters: the knuckles alone sit on
- * the *back* of the hand, so pinning them to the handle buries the handle inside the fist instead of
- * inside the curl. GLTFLoader's name sanitiser only strips whitespace and `[].:/`, so these survive
- * the import verbatim and getObjectByName is safe.
- */
-const GRIP_BONES = [
-  'R_point1_030',
-  'R_middle1_034',
-  'R_ring1_038',
-  'R_pink1_042',
-  'R_point3_032',
-  'R_middle3_036',
-  'R_ring3_040',
-  'R_pink3_044',
-];
-const GRIP_FALLBACK = new Vector3(-16.75, -5.35, 28.55);
-
-/**
- * The other arm, and the reason it is not simply left in: this rig is a *pair* of first-person arms, so
- * the left one is posed forward alongside the right and lands squarely on screen — x -0.140..0.053 in
- * camera space, well inside the +/-0.397 the frame allows at that depth — holding nothing. Collapsing
- * the bone is cheaper than editing the mesh, and it is what makes this a one-handed viewmodel.
- *
- * Everything under L_arm_01 falls to that bone's own origin, which sits 6.9 cm *behind* the eye, so the
- * residual speck is on the wrong side of the near plane and never rasterises.
- *
- * A thousandth rather than zero, on purpose: a zero scale makes the bone matrix singular, and once that
- * is multiplied by its inverse-bind matrix the skinning matrix can come out full of NaNs on hardware
- * that does not special-case a degenerate basis. Adreno is one such.
- */
-const LEFT_ARM = 'L_arm_01';
-const LEFT_TUCK = 1e-3;
+/** Hand skin tone, albedo and subsurface lighting */
+const HAND_ALBEDO = 0.34;
+const HAND_SKIN_COLOR = 0xd69c80;
+const HAND_EMISSIVE = 0x4a2416;
+const HAND_EMISSIVE_INTENSITY = 0.10;
 
 /**
  * The pendulum. This is the item on the list, so it is worth saying what makes a hanging lantern read
@@ -217,44 +160,8 @@ const ACC_TAU = 0.07;
 const DT_MAX = 1 / 20;
 const G = 9.81;
 
-/** See the header: one multiply that stops a fixed-distance point light clipping these to white. */
-const ARMS_ALBEDO = 0.22;
+/** See the header: one multiply that stops a fixed-distance point light clipping lantern to white. */
 const LANTERN_ALBEDO = 0.3;
-
-/**
- * The arm's own self-lift, and the reason the forearm is a forearm instead of a hole in the frame.
- *
- * The lantern's PointLight is a camera child at camera-local (0.25, -0.15, +0.1) and the arm hangs at
- * (0.185, -0.045, -0.27) — beside the light and *in front of* it. Measured on the device, 95% of the
- * front-facing sleeve vertices sit at NdotL about -0.30: the face the player looks at is the face turned
- * away from the only real light in the house, and it receives ambient alone (irradiance 0.466 against
- * 0.263 of diffuse). Then sRGB eats the rest. The atlas is tone-matched in the model pipeline to the
- * arm this one replaced — mean 70 of 255, see tools/tone-lut-arms.json — but sRGB 70 is linear 0.061,
- * ARMS_ALBEDO takes another 4.5x off that, and the silhouette measured Y 3.6 with 94.9% of its pixels
- * below luma 8. Under FilmGrade's black floor that is not a dark arm, it is two lit fingertips floating
- * in the corner vignette.
- *
- * So it is lit from itself, and the number was picked against the old arm rather than against taste.
- * Both files were rendered from the same pinned camera in the same room and scored over the silhouette
- * only: arms_throwing as it actually shipped came out at Y 5.5, and the new arm at 0.25 -> Y 12.0,
- * 0.35 -> Y 15.6, 0.50 -> Y 20.6, 0.70 -> Y 27.1. Side by side, 0.50 turns the sleeve into grey velvet
- * that is plainly brighter than anything the old arm ever was, and 0.70 looks lit from nowhere. 0.35 is
- * the one that keeps the old arm's tonal register — still a dark sleeve in a dark room — while the folds
- * and the cuff seam are unmistakably there. The peach of the fingers never clips at any of them, because
- * the tone match pulled the highlights down (255 -> 204) as well as the shadows up.
- *
- * Worth recording why the old arm needed none of this: it is gloved to the fingertips. Every texel the
- * player could see was cloth, so ambient-only crushed all of it together and the result read as one dark
- * shape — dim, but coherent. This rig's hand is bare. Skin at the tone match's top end next to cloth at
- * its bottom end is what "contrast bahut zyada" actually was, and lifting the cloth off the floor is the
- * half of that a LUT cannot do, because no curve can put light on an unlit surface.
- *
- * Through the base colour map, for the reason LANTERN_GLOW spells out below — a flat emissive layer is
- * exactly the "no texture at all" complaint this whole change exists to answer. And it is a constant
- * rather than a lit/unlit pair because there is no lantern button any more (see TouchControls), so
- * there is no state in which a self-lit arm could be caught glowing in the dark.
- */
-const ARMS_GLOW = 0.35;
 
 /**
  * How much of its own light the lantern shows on itself. Without this it is a dark shape hanging in
@@ -444,15 +351,10 @@ export function installHeldLantern(
   hold.add(swing);
 
   /**
-   * The arm. rotation.y is a half turn because the rig faces +Z (its shoulders measure z = -19 and its
-   * hands z = +26..+34) while the camera looks down -Z; the same flip is what moves the rig's right arm,
-   * which lives on -x in the file, over to screen-right. `position` is filled in once the bones have been
-   * measured and is the negated grip point, which is what puts the fist on `hold`. Any rotation added
-   * here is free: the grip is measured *after* it and so stays pinned whatever this is set to.
+   * The arm / left fist holding the lantern. Anchored at the pivot point of `hold`.
    */
   const arms = new Group();
   arms.name = 'held.arms';
-  arms.rotation.y = Math.PI;
   hold.add(arms);
 
   /** The lantern's own materials, once it lands, so the LANTERN button can dim its self-glow. */
@@ -488,10 +390,15 @@ export function installHeldLantern(
   const halo = mkFlame(FLAME.halo, GLOW_HEX, HALO_ALPHA);
   const core = mkFlame(FLAME.core, 0xfff0d0, CORE_ALPHA);
 
-  /** Scratch for the load-time bone reads and the per-frame physics. Neither path runs re-entrantly. */
-  const vA = new Vector3();
-  const vB = new Vector3();
-  const grip = new Vector3();
+  /** Dedicated warm point light at the flame to illuminate the fist, fingers, handle and lantern */
+  const flameLight = new PointLight(0xffbe7b, 0.75, 1.4, 1.2);
+  flameLight.position.set(0.02, LANTERN_SIZE * FLAME.y, 0.03);
+  swing.add(flameLight);
+
+  /** Soft fill light on the player's side so knuckles, thumb and palm are smoothly sculpted */
+  const fillLight = new PointLight(0xffeedd, 0.15, 1.2, 1.2);
+  fillLight.position.set(0.08, 0.02, 0.12);
+  hold.add(fillLight);
 
   void (async () => {
     try {
@@ -534,63 +441,42 @@ export function installHeldLantern(
     }
 
     try {
-      // No AnimationMixer, no playClip, and the clips are not even loaded — the file was exported with
-      // its animations dropped. What is drawn is the rig's stored rest pose, whose node rotations already
-      // curl all four digits, and that pose is the grip.
-      const { root } = await loader.load('arms.glb');
-      const bone = (name: string): Object3D | undefined => root.getObjectByName(name);
+      // High-detail photogrammetry scan of the left fist (revopoint_inspire_-_strike_fist_-_767x203x154.glb / fist-left.glb).
+      const { root } = await loader.load('fist-left.glb');
 
-      const left = bone(LEFT_ARM);
-      if (left) left.scale.setScalar(LEFT_TUCK);
-      else onError(new Error(`arms.glb has no bone named ${LEFT_ARM}`), 'held:arms.glb');
+      // Center the grip tunnel at the origin of the pivot group (negating grip offset)
+      root.position.set(-GRIP_OFFSET.x, -GRIP_OFFSET.y, -GRIP_OFFSET.z);
 
-      // Bone world matrices are stale until this runs, and every measurement below reads them. It also
-      // has to happen before anything calls setFromObject on this root: Box3.expandByObject only invokes
-      // computeBoundingBox when boundingBox is still null and then reuses that cache, and a SkinnedMesh
-      // computes its box by pushing vertices through the bone matrices — so a box taken before the tuck
-      // would be silently reused forever afterwards.
-      root.updateWorldMatrix(false, true);
+      const pivot = new Group();
+      pivot.name = 'held.fist.pivot';
+      pivot.scale.setScalar(FIST_SCALE);
+      pivot.rotation.set(
+        FIST_ROTATION.x * MathUtils.DEG2RAD,
+        FIST_ROTATION.y * MathUtils.DEG2RAD,
+        FIST_ROTATION.z * MathUtils.DEG2RAD,
+      );
+      pivot.add(root);
 
-      const a = bone(SPAN_BONES[0]);
-      const b = bone(SPAN_BONES[1]);
-      const span = a && b ? a.getWorldPosition(vA).distanceTo(b.getWorldPosition(vB)) : SPAN_FALLBACK;
-      root.scale.setScalar(PALM_SPAN / (span > 1e-6 ? span : SPAN_FALLBACK));
+      // Create warm skin Lambert material: organic diffuse and subsurface emissive without plastic specular scratches
+      const skinMat = new MeshLambertMaterial({
+        color: new Color(HAND_SKIN_COLOR).multiplyScalar(HAND_ALBEDO),
+        emissive: new Color(HAND_EMISSIVE),
+        emissiveIntensity: HAND_EMISSIVE_INTENSITY,
+        side: FrontSide,
+        depthTest: true,
+        depthWrite: true,
+      });
 
-      for (const m of dim(root, ARMS_ALBEDO)) {
-        // See ARMS_GLOW. White emissive, not the flame's GLOW_HEX: the map is doing the colouring here,
-        // and this arm's skin is already warm — tinting the lift as well would push the fingers orange.
-        // Guarded like the lantern's, for the same two reasons.
-        if (m.map && !m.emissiveMap) {
-          m.emissiveMap = m.map;
-          m.emissive.setScalar(1);
-          m.emissiveIntensity = ARMS_GLOW;
-          m.needsUpdate = true;
-        }
-      }
-      arms.add(root);
+      root.traverse((o) => {
+        const mesh = o as Mesh;
+        if (!mesh.isMesh) return;
+        mesh.frustumCulled = false;
+        mesh.material = skinMat;
+      });
 
-      // The grip, in `hold`'s space, so `arms` can be slid until the fist lands on the pivot.
-      // getWorldPosition updates the whole ancestor chain itself, which is what makes this correct even
-      // though the camera has been moving for however many frames the load took: the camera's transform
-      // is in both the reading and the inverse, and cancels.
-      grip.set(0, 0, 0);
-      let found = 0;
-      for (const name of GRIP_BONES) {
-        const j = bone(name);
-        if (!j) continue;
-        grip.add(j.getWorldPosition(vA));
-        found++;
-      }
-      if (found > 0) {
-        grip.multiplyScalar(1 / found);
-      } else {
-        onError(new Error('arms.glb has none of the finger bones; using the measured grip'), 'held:arms.glb');
-        root.localToWorld(grip.copy(GRIP_FALLBACK));
-      }
-      hold.updateWorldMatrix(true, false);
-      arms.position.copy(hold.worldToLocal(grip)).negate();
+      arms.add(pivot);
     } catch (err) {
-      onError(err, 'held:arms.glb');
+      onError(err, 'held:fist-left.glb');
     }
   })();
 
@@ -704,6 +590,8 @@ export function installHeldLantern(
       camera.remove(hold);
       core.mat.dispose();
       halo.mat.dispose();
+      flameLight.dispose();
+      fillLight.dispose();
       flameGeo.dispose();
       flameTex.dispose();
       swing.clear();

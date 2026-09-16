@@ -11,7 +11,7 @@ export default defineConfig({
   },
   server: {
     host: true, // expose to LAN so the device can hit the dev server
-    port: 5173,
+    port: 5174,
   },
   build: {
     target: 'es2022',

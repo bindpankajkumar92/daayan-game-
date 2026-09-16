@@ -27,11 +27,15 @@ import {
   FogExp2,
   Group,
   HemisphereLight,
+  Object3D,
   PointLight,
+  Raycaster,
   Vector3,
+  type AnimationClip,
   type Scene,
 } from 'three';
 import type { Engine } from '@/core/Engine';
+import { globalBus } from '@/core/EventBus';
 import type { AABB, FPController, FloorRect } from '@/player/FPController';
 import { installHeldLantern } from '@/player/HeldLantern';
 import type { TouchControls } from '@/player/TouchControls';
@@ -41,14 +45,24 @@ import { PLACE, buildProps } from '@/world/HouseProps';
 import { BASE_Y, WALL_T } from '@/world/HouseLayout';
 import {
   ARCH,
+  BACK_DOOR_E,
+  BACK_DOOR_W,
   BASEMENT_DOOR,
   BEDROOM_DOOR,
   CELLAR_DOOR,
   GATE,
+  KITCHEN_DOOR,
   LIVING_DOOR,
+  POOJA_DOOR,
   RITUAL_DOOR,
+  RITUAL,
   SPAWN,
+  STORE_DOOR,
   UPPER_INNER,
+  UP_BACK_DOOR,
+  UP_CHILD_DOOR,
+  UP_SHRINE_DOOR,
+  UP_Y,
 } from '@/world/HouseRooms';
 import {
   aabbOf,
@@ -65,12 +79,15 @@ import {
 import { GameState, KEY_NAME, KEY_OF, type KeyId } from '@/game/GameState';
 import { InteractionSystem } from '@/game/Interaction';
 import { ANISOTROPY_CAP, ModelLoader } from '@/world/ModelLoader';
-import { installModels } from '@/world/ModelProps';
+import { MODEL_PLACEMENTS, installModels } from '@/world/ModelProps';
 import { armDaayan } from '@/world/DaayanKnife';
 import { armUpperDoor } from '@/world/UpperDoor';
 import { armInnerDoor } from '@/world/InnerDoor';
-import { armRitualDoors } from '@/world/RitualDoors';
+import { armHiddenDoor } from '@/world/HiddenDoor';
+import { armRitualDoors, type RitualDoorsHandle } from '@/world/RitualDoors';
+import { DaayanAI, type HidingSpotRef } from '@/ai/DaayanAI';
 import { armRitualCoffin, type CoffinHandles } from '@/world/Coffin';
+import { armAnimatedFurniture, type AnimatedFurnitureHandle } from '@/world/AnimatedFurniture';
 import { hingeMainGate } from '@/world/MainGate';
 import { armNoiseProps, type NoisePropHandles } from '@/world/NoiseProps';
 import { armHiding } from '@/world/Hiding';
@@ -88,6 +105,7 @@ import {
   RITUAL_ORDER,
 } from '@/game/Clues';
 import { Hud } from '@/ui/Hud';
+import { NoiseSystem } from '@/game/NoiseSystem';
 import { OverlayLayer, overlayButton, overlayTitle } from '@/ui/OverlayLayer';
 import { showNote } from '@/ui/NoteOverlay';
 import { showKeypad } from '@/ui/KeypadOverlay';
@@ -100,6 +118,11 @@ export interface HouseSceneHandles {
   startupReady: Promise<void>;
   /** All imported models have settled, so gameplay will not decode art in the background. */
   allReady: Promise<void>;
+  /**
+   * Link every model's shaders and upload its textures while the title is still up, so the first frame
+   * that draws a room is not also the frame that builds it. See ModelPropsHandles.warm.
+   */
+  warm: () => Promise<void>;
   /** True while a note, keypad or panel is open, so the loop can hold the player still. */
   overlayOpen: () => boolean;
   /** Close the active note/puzzle layer. Returns true only when it consumed an open overlay. */
@@ -212,7 +235,7 @@ export function buildHouseScene(
   // constants did not have to move. Intensity then makes up the near field. The cutoff is 26 rather
   // than 16 so that the upper room, 10 x 11 m, is not windowed to black at its far wall.
   const lantern = new PointLight(0xffc27a, 3.0, 26, 0.8);
-  lantern.position.set(0.25, -0.15, 0.1);
+  lantern.position.set(-0.205, -0.16, -0.30);
   engine.camera.add(lantern);
   scene.add(engine.camera);
   // Moon through the two windows. A directional light is free and it is the only thing that tells
@@ -237,11 +260,37 @@ export function buildHouseScene(
     { x: RITUAL_DOOR.x, z: RITUAL_DOOR.z, axis: 'z' as const, half: RITUAL_DOOR.half, y0: RITUAL_DOOR.bottom, y1: RITUAL_DOOR.top, thickness: WALL_T },
     // The doorway carved through the upper flat's east partition. Not WALL_T: this hole is cut in an
     // imported wall and that panel measures 0.16, so the jambs are sized to what they are lining — and
-    // they are what covers the two paper-thin skin edges the cut leaves. y0 drops a sill's height below
-    // the clear opening on purpose: makeCasing draws a sill for any opening that does not start at the
-    // floor, and this one starts 2 cm above it, so pulling y0 down by 0.1 lands that sill exactly on the
-    // 5 cm of wall the carve left standing and turns it into a threshold instead of a lip.
-    { x: UPPER_INNER.x, z: UPPER_INNER.z, axis: 'z' as const, half: UPPER_INNER.half, y0: UPPER_INNER.bottom - 0.1, y1: UPPER_INNER.top, thickness: 0.16 },
+    // they are what covers the two paper-thin skin edges the cut leaves. `sill: false` and jambs that
+    // start on the floor rather than 10 cm under it: see the upper wing's three below, which had the
+    // same construction and were measurably the reported artefact.
+    { x: UPPER_INNER.x, z: UPPER_INNER.z, axis: 'z' as const, half: UPPER_INNER.half, y0: UP_Y, y1: UPPER_INNER.top, thickness: 0.16, sill: false },
+    // The rear wing's five, all cut in east-west walls and all standing on the ground floor, so these
+    // get jambs and a lintel and skip makeCasing's sill branch the way BEDROOM_DOOR does. Two off the
+    // front half of the house into the back corridor, three off that corridor into the rooms behind it.
+    { x: BACK_DOOR_W.x, z: BACK_DOOR_W.z, axis: 'x' as const, half: BACK_DOOR_W.half, y0: 0, y1: BACK_DOOR_W.top, thickness: WALL_T },
+    { x: BACK_DOOR_E.x, z: BACK_DOOR_E.z, axis: 'x' as const, half: BACK_DOOR_E.half, y0: 0, y1: BACK_DOOR_E.top, thickness: WALL_T },
+    { x: KITCHEN_DOOR.x, z: KITCHEN_DOOR.z, axis: 'x' as const, half: KITCHEN_DOOR.half, y0: 0, y1: KITCHEN_DOOR.top, thickness: WALL_T },
+    { x: POOJA_DOOR.x, z: POOJA_DOOR.z, axis: 'x' as const, half: POOJA_DOOR.half, y0: 0, y1: POOJA_DOOR.top, thickness: WALL_T },
+    { x: STORE_DOOR.x, z: STORE_DOOR.z, axis: 'x' as const, half: STORE_DOOR.half, y0: 0, y1: STORE_DOOR.top, thickness: WALL_T },
+    // The upper wing's three. Their openings start exactly on UP_Y, the storey's own floor, so
+    // makeCasing's sill branch fires unless it is told not to — and this is where the reported brown
+    // band across the threshold came from.
+    //
+    // These used to pass `y0: UP_Y - 0.1`, on the reasoning that pulling y0 down by a sill's height
+    // sinks the sill into the floor slab and leaves only jambs and lintel showing. It does not: the
+    // sill is 0.1 tall and is centred at y0 + 0.05, so its top face lands at y0 + 0.1 = UP_Y — not
+    // under the floor, *on* it. Probed live at the two doorways where two room floors also meet, the
+    // stack read `up-store-floor@2.40000`, `up-child-floor@2.40000`, `fixture:batch:0@2.40000`, gaps
+    // 0 um and 0 um. Three coincident upward planes, one of them 1.4 x 0.34 m of `mats.wood`, and no
+    // depth buffer can order coincident planes — so which one showed was decided by round-off and
+    // changed as the camera turned. That is "angle change hone pe structure bhi change ho jata hai",
+    // and it was brown because the winner half the time was the wooden sill.
+    //
+    // A doorway you walk through does not want a threshold box anyway, so it is not drawn rather than
+    // hidden a millimetre lower, where its 0.34 m depth could still poke out past the wall.
+    { x: UP_BACK_DOOR.x, z: UP_BACK_DOOR.z, axis: 'x' as const, half: UP_BACK_DOOR.half, y0: UP_Y, y1: UP_BACK_DOOR.top, thickness: WALL_T, sill: false },
+    { x: UP_CHILD_DOOR.x, z: UP_CHILD_DOOR.z, axis: 'z' as const, half: UP_CHILD_DOOR.half, y0: UP_Y, y1: UP_CHILD_DOOR.top, thickness: WALL_T, sill: false },
+    { x: UP_SHRINE_DOOR.x, z: UP_SHRINE_DOOR.z, axis: 'x' as const, half: UP_SHRINE_DOOR.half, y0: UP_Y, y1: UP_SHRINE_DOOR.top, thickness: WALL_T, sill: false },
     // Windows. No leaf; the casing is the sill and lintel that make a hole read as a window.
     { x: -9, z: 6.0, axis: 'z' as const, half: 0.8, y0: 1.0, y1: 2.2, thickness: WALL_T },
     { x: 4.0, z: 10.2, axis: 'x' as const, half: 1.1, y0: 0.9, y1: 2.3, thickness: WALL_T },
@@ -288,9 +337,11 @@ export function buildHouseScene(
   const hiding = armHiding({ player: controller, interact });
   // No authored hiding box is registered here any more. The one that was — 'bedroom-wardrobe', the box of
   // the procedural almirah at (-1.45, 6.6) — existed only because that wardrobe was built synchronously
-  // and so could not go through the model-placement hook. HouseProps no longer builds it, and the
-  // bedroom's wardrobe pocket is closet-old.glb at (-2.0, 9.75), which Hiding picks up through
-  // WARDROBE_NAMES like every other imported hiding spot. Beds join the same way.
+  // and so could not go through the model-placement hook. HouseProps no longer builds it, and the almirah
+  // that replaced it is not in the bedroom either: closet-old.glb stands in the store room at
+  // (4.4, 16.65), which Hiding picks up through WARDROBE_NAMES like every other imported hiding spot.
+  // Beds join the same way, which is why the two that left the bedroom for the upper wing are still
+  // hiding places without a line here changing.
   const tweens: Tween[] = [];
   const tween = (dur: number, apply: (k: number) => void): void => {
     tweens.push({ t: 0, dur, apply });
@@ -377,6 +428,7 @@ export function buildHouseScene(
    * appears, only without the ceremony.
    */
   let coffinLid: CoffinHandles | null = null;
+  const animatedFurnitures: AnimatedFurnitureHandle[] = [];
   const altar = makeAltar(fx, PLACE.altar.x, PLACE.altar.z, BASE_Y, ALTAR_DISPLAY);
   fixtures.add(altar.group);
   aabbs.push(...altar.aabbs);
@@ -477,8 +529,8 @@ export function buildHouseScene(
   // blocker filling the opening, the prompt, and the mixer that plays its own eased slide — is built in
   // the placement hook below, once the model exists and its fit has been applied. See RitualDoors.
   let ritualOpen = false;
-  /** The screen's per-frame mixer tick, null until it is placed and if its clip did not arrive. */
-  let slideScreen: ((dt: number) => void) | null = null;
+  /** The screen's handle — mixer tick plus the opener the noise:alert path uses — null until placed. */
+  let ritualScreen: RitualDoorsHandle | null = null;
 
   // --- Everything readable ---
   // One registration per CLUES entry that HouseProps published an anchor for, so a clue that has
@@ -541,6 +593,76 @@ export function buildHouseScene(
     });
   };
 
+  /**
+   * She caught the player — the consequence `game:caught` never had.
+   *
+   * The AI emits `game:caught` exactly once per catch and then holds a recovery window open
+   * (`cfg.catchRecovery`, 6 s on normal) for whoever subscribes. Nothing ever did, so being caught
+   * cost the player nothing at all: she grabbed, stunned herself, woke, and the run simply continued.
+   * That is the gap this closes.
+   *
+   * The flow is deliberately the shortest one that reads as a failure rather than a hiccup:
+   *
+   *   1. `state.caught()` spends a life and tells us whether any are left.
+   *   2. Either way the player is warped back to the bed and the Daayan is reset to her ritual room —
+   *      being sent back to the *same room* she is standing in would be a second catch, not a mercy.
+   *   3. With lives left: a toast and the run continues. On the last life: the run ends.
+   *
+   * The respawn is the reason this handler exists rather than the AI doing it. Only the scene knows
+   * where the bed is, that the overlay has to be closed first, and that she has to be walked home
+   * before the player sees anything — and none of that belongs in the AI, whose recovery window is
+   * what makes this window safe to use.
+   */
+  globalBus.on('game:caught', () => {
+    // A catch during the ending is not a failure, and a catch after the last life has already been
+    // spent must not spend another. `state.caught()` guards both, but bailing here too keeps the
+    // overlay from being replaced under the player as they read the ending.
+    if (ended || state.isDead()) return;
+
+    const alive = state.caught();
+    overlay.close();
+    hud.setPrompt(null);
+
+    // Back to the bed, and her back to the ritual room. Both are hard warps rather than a fade,
+    // because the catch has already played its own beat and a second one would read as a stutter.
+    // `warpTo` clears velocity itself, so there is no separate stop to make.
+    controller.warpTo(new Vector3(SPAWN.x, SPAWN.y, SPAWN.z), SPAWN.yaw);
+    ai.resetToStart();
+
+    if (!alive) {
+      ended = true;
+      overlay.show((content) => {
+        content.appendChild(
+          overlayTitle(localize('The house keeps you'), localize('There is nothing left to wake into.')),
+        );
+        const body = document.createElement('div');
+        body.style.cssText = 'font: italic 400 15px/1.75 Georgia, serif; color: #ddd2bd;';
+        const p = document.createElement('p');
+        p.style.cssText = 'margin: 0 0 1em;';
+        p.textContent = localize('Her hand closes on your wrist and the house goes quiet.');
+        body.appendChild(p);
+        content.appendChild(body);
+        content.appendChild(
+          overlayButton(
+            localize('Begin again'),
+            () => {
+              state.reset();
+              ended = false;
+              controller.warpTo(new Vector3(SPAWN.x, SPAWN.y, SPAWN.z), SPAWN.yaw);
+              ai.resetToStart();
+              overlay.close();
+              hud.showToast('You wake on a bed in the dark bedroom.', 4.0);
+            },
+            'width: 100%; margin-top: 8px;',
+          ),
+        );
+      });
+      return;
+    }
+
+    hud.showToast('You wake on the bed, and the house has shifted.', 4.0);
+  });
+
   // --- Hand the world to the player ---
   // The controller holds both arrays by reference, which is what lets the gate blocker and the
   // ritual screen's blocker be animated, or dropped, by mutating the objects already inside them.
@@ -568,10 +690,24 @@ export function buildHouseScene(
    * any of them do, this is set.
    */
   let noiseProps: NoisePropHandles | null = null;
+  let daayanRoot: Object3D | null = null;
+  /**
+   * Her animation clips, kept separately from the root.
+   *
+   * `installModels` hands both to the placement hook, but the AI is constructed after this and needs
+   * to build its own mixer — deliberately separate from ModelProps' own, so driving `timeScale` from
+   * her real speed cannot interfere with the distance cull that stops ModelProps evaluating a clip
+   * nobody can see.
+   */
+  let daayanClips: readonly AnimationClip[] = [];
   // The knife goes in on the placement hook rather than here, because it is measured in her bone
   // units and those only mean anything once her fit has written the root scale.
-  const models = installModels(modelLoader, scene, engine.camera, aabbs, fx.shadow, reportError, (name, root, clips) => {
-    if (name === 'daayan.glb') armDaayan(modelLoader, root, reportError);
+  const models = installModels(modelLoader, scene, engine.camera, aabbs, fx.shadow, house.mats.wallWarm.map, reportError, (name, root, clips) => {
+    if (name === 'daayan.glb') {
+      daayanRoot = root;
+      daayanClips = clips;
+      armDaayan(modelLoader, root, clips, reportError);
+    }
     if (name === 'bed.glb') {
       root.updateWorldMatrix(true, true);
       const bedBox = new Box3().setFromObject(root);
@@ -617,6 +753,9 @@ export function buildHouseScene(
     // Imported beds and closet are measured only after fitToHeight has written their scale. The hiding
     // arm ignores every other name, just like NoiseProps below.
     hiding.onPlaced(name, root);
+    // The AI's copy of the hiding-spot list is a snapshot, so it has to be rebuilt when a spot lands.
+    // Cheap — every placement in the house runs through this, and it is a handful of objects.
+    refreshHidingSpots();
     // The four bottles and plates. Unconditional: the arm ignores every other placement.
     noiseProps?.onPlaced(name, root);
     // Same reason as the knife: the hinge is placed from the leaf's world box, which only exists once
@@ -624,6 +763,7 @@ export function buildHouseScene(
     if (name === 'door.glb') {
       armUpperDoor(root, {
         aabbs,
+        player: controller,
         interact,
         tween,
         toast: (msg) => hud.showToast(msg, 4.0),
@@ -633,16 +773,33 @@ export function buildHouseScene(
     if (name === 'door-inner.glb') {
       armInnerDoor(root, {
         aabbs,
+        player: controller,
         interact,
         tween,
         toast: (msg) => hud.showToast(msg, 4.0),
         onError: reportError,
       });
     }
+    if (name === 'hidden-door') {
+      // The leaf for the carved opening in the nook's west wall, and the red lock that holds it. Same
+      // hinge surgery as the other two doors; what is different is that this one is gated on the red
+      // key and carries the plate the player identifies it by. `onOpened` is the reveal's cue.
+      armHiddenDoor(root, {
+        aabbs,
+        player: controller,
+        interact,
+        state,
+        mats: fx,
+        tween,
+        toast: (msg) => hud.showToast(msg, 4.0),
+        onOpened: () => state.raiseTension('DISTURBING'),
+        onError: reportError,
+      });
+    }
     if (name === 'doors-ritual') {
       // The one placement that wants the file's clips: the slide is a baked ease this scene must not
       // re-ease, so RitualDoors builds its own mixer and hands back the tick the frame loop calls.
-      slideScreen = armRitualDoors(root, clips, {
+      ritualScreen = armRitualDoors(root, clips, {
         aabbs,
         interact,
         toast: (msg) => hud.showToast(msg, 3.4),
@@ -650,6 +807,11 @@ export function buildHouseScene(
         onOpen: () => {
           ritualOpen = true;
           state.raiseTension('DISTURBING');
+          // The hunt starts here. This is the beat where the player has deliberately opened the room
+          // she is standing in, which is the one moment in the game where a silent, waiting Daayan
+          // would be wrong: from now on she is awake and the house is hers. Slight delay so the slide
+          // finishes before her footsteps start, or the two read as one sound.
+          wakeDaayanAt = performance.now() / 1000 + 1.2;
         },
       });
     }
@@ -658,6 +820,51 @@ export function buildHouseScene(
       // must not re-ease, so Coffin builds its own mixer, holds it shut, and hands back the tick the
       // frame loop calls and the release the puzzle's solve fires.
       coffinLid = armRitualCoffin(root, clips, reportError);
+    }
+    if (name === 'wardrobe-chateau') {
+      const h = armAnimatedFurniture({
+        id: 'wardrobe-chateau',
+        root,
+        clips,
+        interact,
+        openLabel: 'Open Wardrobe',
+        closeLabel: 'Close Wardrobe',
+        openToast: 'You open the chateau wardrobe.',
+        closeToast: 'You close the wardrobe.',
+        toast: (msg) => hud.showToast(msg, 3.0),
+        onError: reportError,
+      });
+      if (h) animatedFurnitures.push(h);
+    }
+    if (name === 'dresser-bedroom') {
+      const h = armAnimatedFurniture({
+        id: 'dresser-bedroom',
+        root,
+        clips,
+        interact,
+        openLabel: 'Open Drawer',
+        closeLabel: 'Close Drawer',
+        openToast: 'You slide the dresser drawer open.',
+        closeToast: 'You close the drawer.',
+        toast: (msg) => hud.showToast(msg, 3.0),
+        onError: reportError,
+      });
+      if (h) animatedFurnitures.push(h);
+    }
+    if (name === 'cabinet-animated') {
+      const h = armAnimatedFurniture({
+        id: 'cabinet-animated',
+        root,
+        clips,
+        interact,
+        openLabel: 'Open Cabinet',
+        closeLabel: 'Close Cabinet',
+        openToast: 'You open the bedside cabinet.',
+        closeToast: 'You close the cabinet.',
+        toast: (msg) => hud.showToast(msg, 3.0),
+        onError: reportError,
+      });
+      if (h) animatedFurnitures.push(h);
     }
     if (name === 'gate-main.glb') {
       swingGate = hingeMainGate(root);
@@ -695,7 +902,242 @@ export function buildHouseScene(
     reportError,
   );
 
+  // Dynamic noise tracking: sprinting, object collision impulses, cat meows, scaled by Daayan distance
+  const noiseSystem = new NoiseSystem({
+    player: controller,
+    getDaayanPos: () => {
+      if (daayanRoot) {
+        const p = new Vector3();
+        daayanRoot.getWorldPosition(p);
+        return p;
+      }
+      return new Vector3(-28.4, BASE_Y, 4.3);
+    },
+  });
+
+  /**
+   * Daayan's brain — see `src/ai/`. This replaces the previous static statue: she still starts
+   * wherever `daayan.glb` was authored, in the ritual room, but she now perceives, remembers, plans
+   * and walks.
+   *
+   * Built here, after the collider lists are complete but before the frame loop, and given the
+   * *live* `aabbs` and `floors` arrays by reference — the same arrays the controller walks on — so her
+   * navigation cannot disagree with the world the player experiences. Her nav grid is baked once from
+   * them, so anything pushed into `aabbs` later (the bed's base box, if it had not already landed)
+   * would be missed; by this point every synchronous collider is in, and the bed's box is only a
+   * boot-order guard for the controller rather than a wall she should respect.
+   *
+   * `getRoot` is a thunk because the model arrives asynchronously: by the time her first tick needs a
+   * root, `daayanRoot` is set, and until then she simulates perfectly well without a mesh.
+   */
+  const hidingSpots: HidingSpotRef[] = [];
+  /**
+   * Her start pose, read from the same row that places the mesh.
+   *
+   * Not a literal: the model row is the source of truth for where she stands, and duplicating its
+   * numbers here is how a spawn quietly stops matching the statue the player can actually see. If the
+   * row is ever renamed, the fallback keeps her in the ritual room rather than at the origin.
+   */
+  const daayanRow = MODEL_PLACEMENTS.find((p) => p.name === 'daayan.glb');
+  const daayanStart = {
+    position: new Vector3(
+      daayanRow?.x ?? RITUAL.x0 + 1.6,
+      daayanRow?.y ?? BASE_Y,
+      daayanRow?.z ?? 4.3,
+    ),
+    yaw: daayanRow?.yaw ?? 2.41,
+  };
+
+  const ai = new DaayanAI({
+    getRoot: () => daayanRoot,
+    getClips: () => daayanClips,
+    player: controller,
+    obstacles: aabbs,
+    floors,
+    hidingSpots,
+    start: daayanStart,
+    difficulty: 'normal',
+    overrides: {
+      // Woken by the first real noise, which in practice is the player breaking into the cellar wing.
+      wakeOnTrigger: true,
+      // The overlay is worth having while the AI is new. Flip to false — or build for production, where
+      // `daayanConfigFor` forces it off — once it stops being useful.
+      debug: import.meta.env.DEV,
+    },
+    // She may only start behaving once the screen over the ritual doorway has actually opened.
+    //
+    // What seals her in is this predicate plus being asleep — not her graph. The basement's west
+    // wall is built with the doorway already cut, and the screen's own blocker lands with the model,
+    // after the nav bake, so the grid leaves the doorway walkable throughout. What keeps her home is
+    // that nothing may wake her while the screen is shut: the wake paths in DaayanAI gate on this,
+    // because an ambient noise waking her was the reported bug — she set off on a patrol and was
+    // suddenly standing in the house before the door had slid.
+    //
+    // The one exception is a maxed noise bar, which breaks the seal itself: see the `noise:alert`
+    // subscription below.
+    canRoam: () => ritualOpen,
+    scene,
+    camera: engine.camera,
+  });
+
+  /**
+   * Hiding spots are registered asynchronously as their models land, so the list is rebuilt rather than
+   * captured: the AI's search consults it every time it plans an itinerary (§14 requires a search to
+   * check the places a player could be).
+   */
+  const refreshHidingSpots = (): void => {
+    hidingSpots.length = 0;
+    for (const s of hiding.getSpots()) {
+      hidingSpots.push({ id: s.id, position: new Vector3(s.use.x, s.use.y, s.use.z) });
+    }
+  };
+  refreshHidingSpots();
+
+  /**
+   * When to wake her, as a wall-clock deadline, or 0 for "not yet".
+   *
+   * A deadline rather than a flag because the ritual door's slide is 1.3 s and her first footstep
+   * landing on top of it reads as a single confused noise.
+   */
+  let wakeDaayanAt = 0;
+
+  /**
+   * A maxed noise bar breaks the ritual seal, wherever in the house it maxed.
+   *
+   * The bar filling up is the loudest thing the player can do; the reported bug was that it could
+   * sit full a room away from a sealed-in Daayan who never reacted. So the racket disturbs the
+   * ritual itself: the screen slides open on its own, and she wakes on the usual 1.2 s beat already
+   * knowing where it happened — the AI's own `noise:alert` handler stashes the position while the
+   * seal is shut and delivers it on `wake`.
+   *
+   * Subscription order is load-bearing: this is registered *after* the AI's constructor, so the
+   * AI's handler runs first and stashes while `canRoam` is still false; this handler then opens the
+   * seal, and the frame loop's `wakeDaayanAt` fires the delivery. Ordinary noises stay gated —
+   * being sealed in is still a working defense against everything short of a full bar.
+   */
+  globalBus.on('noise:alert', () => {
+    if (ritualOpen) return;
+    if (ritualScreen) {
+      ritualScreen.open('Somewhere below, a screen slides open.');
+    } else {
+      // The screen's model has not landed yet, so its blocker does not exist either and the doorway
+      // is already passable: flip the flags its opening would have flipped and carry on.
+      ritualOpen = true;
+      state.raiseTension('DISTURBING');
+      wakeDaayanAt = performance.now() / 1000 + 1.2;
+    }
+  });
+
   // --- Frame ---
+  /**
+   * Developer probe — extra handles on the existing `window.__daayan` object, in DEV builds only.
+   *
+   * The noise bar is the one mechanic that cannot be checked from outside the render loop: whether a
+   * sprint actually fills the bar, whether the fill fires `noise:alert` at the right moment, and
+   * whether the AI then routes to where the player stood, all depend on the live controller and the
+   * live scene. A headless suite proves the AI half (see `tools/playtest-check.ts` BUG 3) but cannot
+   * prove the wiring half, and the wiring half is what the player reported.
+   *
+   * `import.meta.env.DEV` is statically folded, so these additions are absent from a release bundle
+   * rather than merely unreferenced. `main.ts` already publishes the base object unconditionally,
+   * because the on-device perf gate reads it; this adds the scene-local handles it cannot reach.
+   *
+   *   __daayan.noise()   fill the bar and fire the alert, wherever the player is standing
+   *   __daayan.level()   the bar's current value, 0–1
+   *   __daayan.state()   her state, why, and how far away she is
+   *   __daayan.open()    open the ritual screen without waiting for a full bar
+   */
+  let devProbe: NoiseSystem | null = null;
+  if (import.meta.env.DEV) {
+    const handles = (window as unknown as { __daayan?: Record<string, unknown> }).__daayan ?? {};
+    handles.noise = () => devProbe?.fill();
+    handles.level = () => devProbe?.getLevel() ?? 0;
+    /**
+     * The gait as the noise system sees it, which is the half that was wrong three times over.
+     *
+     * `bar()` prints one line: what the run control is doing, what the controller concluded from it,
+     * and what the bar has done as a result. The distinction between `intent` and `running` is the
+     * whole of the small-room bug — holding run while pressed against a wall is `intent: true,
+     * running: false`, and that combination must hold the bar rather than drain it.
+     */
+    handles.bar = () => ({
+      intent: controller.isRunIntent(),
+      running: controller.isRunning(),
+      level: Number((devProbe?.getLevel() ?? 0).toFixed(3)),
+      alerted: devProbe?.hasFiredAlert() ?? false,
+    });
+    handles.state = () => ({
+      state: ai.getState(),
+      reason: ai.getReason(),
+      awake: ai.isAwake(),
+      away: ai.getPosition().distanceTo(engine.camera.position),
+    });
+    /**
+     * Take the red key without walking to it, so the hidden door can be tested end to end.
+     *
+     * The key lives under a pillow in the black magic room at the far end of the basement, and a door
+     * that cannot be opened on demand cannot be checked — the prompt has to be watched changing from
+     * "Locked" to "Turn the red key", and that is the whole of what this door does.
+     */
+    handles.redKey = () => state.collectRedKey();
+    handles.open = () => ritualScreen?.open('A screen slides open.');
+    /**
+     * What the crosshair is actually on, as one pasteable line.
+     *
+     * A screenshot cannot say what it is a picture of, and "the red square on the door" is not a thing
+     * the code has a name for. This raycasts from the camera and walks up to the nearest named
+     * ancestor, which for an imported prop is the placement row's `id` — so it answers both "which
+     * object is this" and "where in the world is it", which together are enough to place or remove
+     * anything without a debugger.
+     */
+    handles.look = () => {
+      const dir = new Vector3();
+      engine.camera.getWorldDirection(dir);
+      // Start half a metre out, not at the eye. The camera carries the held lantern, the arm and the
+      // fist as children — thirteen of them — so a ray from the eye hits the viewmodel at 0.2 m every
+      // single time and the probe answers "grade" for the whole house. Nothing placeable is closer than
+      // half a metre anyway, and the reach of every interaction in the game is longer than that.
+      const from = engine.camera.position.clone().addScaledVector(dir, 0.5);
+      const caster = new Raycaster(from, dir, 0.05, 30);
+      const hits = caster.intersectObjects(engine.scene.children, true);
+      const hit = hits.find((h) => h.object.visible);
+      if (hit === undefined) return 'nothing';
+      // The whole chain, innermost first. A placement row names the root it was loaded into, so the
+      // useful answer is usually the second or third entry — but which one is only knowable by looking,
+      // and reporting one name guessed wrong is worse than reporting five that are right.
+      const chain: string[] = [];
+      let o: Object3D | null = hit.object;
+      while (o !== null && chain.length < 6) {
+        if (o.name !== '') chain.push(o.name);
+        o = o.parent;
+      }
+      const p = hit.point;
+      return (
+        `chain=${chain.join(' < ') || '(unnamed)'} ` +
+        `at(${p.x.toFixed(2)}, ${p.y.toFixed(2)}, ${p.z.toFixed(2)}) d=${hit.distance.toFixed(2)}`
+      );
+    };
+    /**
+     * Where the player is standing and which way they are looking, as one pasteable line.
+     *
+     * Prop placement needs both numbers and needs them from the player's own eyes: the position is
+     * where the thing goes, and the heading is which way its front faces. It reads the camera's
+     * forward vector rather than the controller's yaw so that "stand at the door and look at it"
+     * means exactly what it sounds like — the answer describes the sightline, not an internal angle.
+     */
+    handles.where = () => {
+      const p = controller.getPosition();
+      const dir = new Vector3();
+      engine.camera.getWorldDirection(dir);
+      return (
+        `pos(${p.x.toFixed(2)}, ${p.y.toFixed(2)}, ${p.z.toFixed(2)})  ` +
+        `dir(${dir.x.toFixed(2)}, ${dir.y.toFixed(2)}, ${dir.z.toFixed(2)})  ` +
+        `yaw(${Math.atan2(dir.x, dir.z).toFixed(2)})`
+      );
+    };
+    (window as unknown as { __daayan: unknown }).__daayan = handles;
+  }
+
   let clock = 0;
   const AMB_TOP = ambient.intensity;
   const HEMI_TOP = hemi.intensity;
@@ -713,10 +1155,11 @@ export function buildHouseScene(
     cat.update(dt);
     // The ritual screen, once. It is paused until the player uses it and re-paused by the clip's own
     // clampWhenFinished, so outside those 1.3 seconds this call costs a null check and a timeScale of 0.
-    slideScreen?.(dt);
+    ritualScreen?.tick?.(dt);
     // The coffin's lid, for the same reason and with the same cost: parked shut until the sequence is
     // solved, then one 1.2 s swing, then clamped open.
     coffinLid?.tick(dt);
+    for (const f of animatedFurnitures) f.tick(dt);
 
     // Tweens run backwards so a finished one can be spliced out mid-loop.
     for (let i = tweens.length - 1; i >= 0; i--) {
@@ -774,6 +1217,33 @@ export function buildHouseScene(
     engine.renderer.toneMappingExposure = EXP_TOP * (1 + 0.05 * up);
 
     hud.update(dt);
+    noiseSystem.update(dt, controller.isRunning());
+    hud.setNoiseLevel(noiseSystem.getLevel());
+    // Written every frame rather than on the `player:lives` event, because the "begin again" path
+    // restores all three at once from a button handler and an event-only update would need a second
+    // emitter for that case. `setLives` is a handful of style writes and only touches changed state.
+    hud.setLives(state.getLives());
+
+    /**
+     * Her tick.
+     *
+     * Deliberately after the player has advanced for this frame — `main.ts` has already moved the
+     * controller — so she perceives and reacts to where the player *is*, not where they were one frame
+     * ago. Running her before `models.update` above would also work, but then her own mixer would be a
+     * frame behind the pose she just wrote.
+     *
+     * Paused behind an open overlay, with everything else that is not scenery: reading a note should
+     * not be a chance to be crept up on, and §27's whole scheduling design assumes she is not the
+     * thing costing frames while the player is stationary.
+     */
+    if (!overlay.isOpen()) ai.update(dt);
+
+    // The hunt's start, once the ritual door has finished sliding.
+    if (wakeDaayanAt !== 0 && performance.now() / 1000 >= wakeDaayanAt) {
+      wakeDaayanAt = 0;
+      ai.wake();
+    }
+
     if (overlay.isOpen()) {
       // No prompt behind an open overlay, and no picking either: the tap that closes the note
       // must not also be able to fire whatever the camera happens to be aimed at.
@@ -781,6 +1251,10 @@ export function buildHouseScene(
       touch.setInteractionVerb('interact');
       return;
     }
+    // Developer probe: run `noise()` from the devtools console to fill the bar and fire the alert by
+    // hand, which is the only way to reproduce the "bar maxed, she never came" report in a real
+    // browser without sprinting the whole house. See `__daayan` for the rest of the readout.
+    devProbe = noiseSystem;
     hud.setPrompt(interact.update());
     touch.setInteractionVerb(interact.getCurrentVerb());
     // After the overlay return and after the prompt, because this is the other half of the same thing:
@@ -791,6 +1265,7 @@ export function buildHouseScene(
   };
 
   const dispose = (): void => {
+    ai.dispose();
     interact.clear();
     hiding.dispose();
     hud.dispose();
@@ -801,6 +1276,7 @@ export function buildHouseScene(
     cat.dispose();
     footsteps.dispose();
     audio.dispose();
+    noiseSystem.dispose();
     modelLoader.dispose();
 
     engine.camera.remove(lantern);
@@ -821,6 +1297,7 @@ export function buildHouseScene(
     update,
     startupReady: models.startupReady,
     allReady: models.allReady,
+    warm: () => models.warm(engine.renderer),
     overlayOpen: () => overlay.isOpen(),
     closeOverlay: () => {
       if (!overlay.isOpen()) return false;
