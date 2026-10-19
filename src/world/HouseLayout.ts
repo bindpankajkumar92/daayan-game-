@@ -54,6 +54,18 @@ export interface WallRun {
    */
   collideOnly?: boolean;
   /**
+   * Draw the run but contribute no collider — the inverse of `collideOnly`, for the one arrangement where
+   * a collider is the thing that breaks: a run the player walks *under*, like the head of a stairwell.
+   * The moving test inflates the walker's capsule by its radius, so a collider reaching down to a floor
+   * line refuses the step down to whoever passes beneath it: they keep the height of the step they were
+   * on and float over the floor beyond. (The horizontal test skips such a run — it compares the box's top
+   * against the eye alone — which is why walking in never shows this.)
+   *
+   * A run like that is written twice: this one draws, and a `collideOnly` twin at the same x/z carries
+   * the collider from just above the tallest pose that walks under.
+   */
+  drawOnly?: boolean;
+  /**
    * Render the structural wall, but let an imported facing built from this run own collision.
    * Unlike `collideOnly`, this keeps a sealed backing behind the irregular model surface.
    */
@@ -110,6 +122,18 @@ export interface RoomSpec {
    * showed a hole, the collision said there was floor, and the two never met.
    */
   floorHoles?: Rect[];
+  /**
+   * Openings in this room's *ceiling*, subtracted from the plane like `floorHoles` is from the floor.
+   *
+   * Needed because a ceiling and the floor above it are drawn by different code and can disagree
+   * about where the hole is. The hidden room is the case that forced it: the upper storey's slab has
+   * the stairwell cut out of it, so from above the well reads as a genuine opening you can see down
+   * through — but the room's own ceiling was a single uncut plane, so from the stair below the same
+   * well was capped with boards. Looking up you saw a lid; looking down you saw a hole. Both are
+   * drawn from the same `HID_STAIR_WELL`, so listing it here keeps the two views of one opening
+   * describing the same thing.
+   */
+  ceilingHoles?: Rect[];
   /**
    * An imported model supplies this room's floor, so no plane is built for it — two surfaces a
    * centimetre apart z-fight. Walls still come from `walls`, which for such a room means the faces

@@ -217,6 +217,11 @@ const PLAN = {
    */
   'heart_necklace.glb': { out: 'necklace-heart.glb', ratio: 0.6, error: 0.01, dropAnims: true },
   /**
+   * The Egyptian collar that replaced the heart necklace on her neck. Same bound and same reasoning:
+   * it is looked at from inside the wardrobe, so the silhouette of the collar is what has to survive.
+   */
+  'egyptian_necklace.glb': { out: 'necklace-egyptian.glb', ratio: 0.6, error: 0.01, dropAnims: true },
+  /**
    * The room behind the red-locked door. Unlike every other import here this one is a *space* the
    * player stands inside, so the bound is set by what the walls look like at arm's length rather than
    * by silhouette at three metres — and it is the largest source in the tree at 17 MB across 192

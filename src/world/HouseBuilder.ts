@@ -37,8 +37,8 @@ import {
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import type { AABB, FloorRect } from '@/player/FPController';
 import { makeCeilingBoards, makePlaster, makeWoodFloor, makeWoodPanel } from './ProcTextures';
-import { expandRun, segmentBox, type Box, type Segment } from './HouseLayout';
-import { ROOMS, UPPER_PATCH, houseFloors } from './HouseRooms';
+import { expandRun, segmentBox, type Box, type Rect, type Segment } from './HouseLayout';
+import { ROOMS, UPPER_PATCH, houseFloors, subtractRect } from './HouseRooms';
 
 /**
  * World size one texture repeat covers. Wall plaster at 2.4 m ≈ 210 px/m from a 512 px map.
@@ -572,7 +572,9 @@ export function buildHouse(anisotropy: number): BuiltHouse {
             skirtGeos.push(worldBox(skirtBox(b), TRIM_TILE));
           }
         }
-        if (run.modelCollision !== true) aabbs.push(boxToAabb(b));
+        // A draw-only run is the inverse of the one above: the wall is there to be looked at, and its
+        // collider is a separate `collideOnly` run. See `WallRun`.
+        if (run.modelCollision !== true && run.drawOnly !== true) aabbs.push(boxToAabb(b));
       }
     }
     addMerged(wallGeos, room.tone === 'plaster' ? mats.wallWarm : mats.wallCool, `${room.id}-walls`);
@@ -616,14 +618,34 @@ export function buildHouse(anisotropy: number): BuiltHouse {
     }
 
     if (room.ceiling) {
-      const ceilGeo = track(slabPlane(fw, fd));
-      anchorUv(ceilGeo, fw / CEIL_TILE, fd / CEIL_TILE, 0, 0);
-      const ceil = new Mesh(ceilGeo, room.tone === 'plaster' ? mats.ceil : mats.wallCool);
-      ceil.rotation.x = Math.PI / 2;
-      ceil.position.set((room.floor.x0 + room.floor.x1) / 2, y1, (room.floor.z0 + room.floor.z1) / 2);
-      ceil.name = `${room.id}-ceil`;
-      group.add(ceil);
-      slabs.push({ ...room.floor, y: y1, mat: ceil.material as Material, kind: 'ceil' });
+      // Cut the ceiling's own holes before drawing it, exactly as `houseFloors` cuts the floor's.
+      //
+      // A ceiling used to be one uncut plane over the room's whole rectangle, which was wrong for the
+      // one room that has an opening above it. The hidden room's ceiling sits at 2.4 — the same line
+      // as the upper storey's floor — and the upper slab has the stairwell cut out of it, so from
+      // above the well is a real opening you look down through. Uncapped from above and capped from
+      // below is the same opening described two different ways, and the player sees the contradiction
+      // the moment they walk down the stair and look back up. Reported as "upar se ceiling nahi
+      // dikhti, andar jaake dikhti hai".
+      //
+      // `subtractRect` returns up to four rectangles, so this builds one plane per piece. When a room
+      // has no `ceilingHoles` the list is the room itself and the output is byte-identical to before.
+      let ceilRects: Rect[] = [room.floor];
+      for (const hole of room.ceilingHoles ?? []) {
+        ceilRects = ceilRects.flatMap((q) => subtractRect(q, hole));
+      }
+      for (const cr of ceilRects) {
+        const cw = cr.x1 - cr.x0;
+        const cd = cr.z1 - cr.z0;
+        const ceilGeo = track(slabPlane(cw, cd));
+        anchorUv(ceilGeo, cw / CEIL_TILE, cd / CEIL_TILE, 0, 0);
+        const ceil = new Mesh(ceilGeo, room.tone === 'plaster' ? mats.ceil : mats.wallCool);
+        ceil.rotation.x = Math.PI / 2;
+        ceil.position.set((cr.x0 + cr.x1) / 2, y1, (cr.z0 + cr.z1) / 2);
+        ceil.name = `${room.id}-ceil`;
+        group.add(ceil);
+        slabs.push({ ...cr, y: y1, mat: ceil.material as Material, kind: 'ceil' });
+      }
     }
   }
 

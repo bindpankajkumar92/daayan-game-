@@ -45,6 +45,12 @@ const LOUDNESS = { walk: 2.5, run: 4.0, crouch: 1.0 };
  */
 const RUN_MEMORY = 0.3;
 
+/**
+ * Longest horizontal slide `move` makes in one go, in metres. Under the shallowest tread in the house
+ * (the hidden stair's 0.22 m), so no substep can hop a tread and see a rise it is not allowed to climb.
+ */
+const MAX_SUBSTEP = 0.1;
+
 export interface AABB {
   minX: number;
   minY: number;
@@ -272,12 +278,23 @@ export class FPController {
     const vx = (rx * strafe + fx * forward) * speed;
     const vz = (rz * strafe + fz * forward) * speed;
 
-    // Horizontal move-and-slide with stair step-up.
-    this.moveAxis(vx, vz, dt);
-
-    // Gravity (always applied; landing handled below).
-    this.velocity.y -= this.opts.gravity * dt;
-    this.moveAxisVertical(dt);
+    // Horizontal move-and-slide with stair step-up, in substeps of at most MAX_SUBSTEP metres.
+    //
+    // One big slide per frame was the "player walks under the stair" bug. The hidden flight's treads
+    // are 0.22 m deep and 0.275 m apart in height; running at 4 m/s on a 15 fps frame covers 0.27 m,
+    // so the feet skipped a whole tread and landed two rises (0.55 m) below the one ahead. That is past
+    // `groundYAt`'s step-up reach, so it picked the room floor under the flight instead, and the player
+    // carried on beneath the stair. A substep never crosses more than one tread, so every rise the
+    // controller sees is one it can climb. Gravity and ground snap run per substep for the same reason.
+    const travel = Math.hypot(vx, vz) * dt;
+    const steps = Math.max(1, Math.ceil(travel / MAX_SUBSTEP));
+    const sdt = dt / steps;
+    for (let i = 0; i < steps; i++) {
+      this.moveAxis(vx, vz, sdt);
+      // Gravity (always applied; landing handled below).
+      this.velocity.y -= this.opts.gravity * sdt;
+      this.moveAxisVertical(sdt);
+    }
 
     // The camera is a separate object and only follows through syncCamera(). Leaving it out here
     // was the "player does not move" bug: position advanced every step but the view stayed put, so

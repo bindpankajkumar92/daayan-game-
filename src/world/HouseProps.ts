@@ -19,7 +19,7 @@
  * box on it, the workbench and the panel beside it — live in PLACE so they cannot drift apart.
  */
 
-import { BoxGeometry, Group, Vector3, type BufferGeometry } from 'three';
+import { BoxGeometry, CylinderGeometry, Group, Mesh, Vector3, type BufferGeometry } from 'three';
 import { Batch } from './Batch';
 import { SHADOW_LIFT, shadowQuad } from './ContactShadow';
 import { aabbOf, type FixtureMats } from './Fixtures';
@@ -66,6 +66,15 @@ export interface HouseProps {
   aabbs: AABB[];
   /** Where each readable thing is, keyed by its id in CLUES. */
   anchors: Record<string, Vector3>;
+  /**
+   * The hidden room's gate key, as its own group so the pick-up can hide it.
+   *
+   * Not batched with the rest of the dressing, and that is the whole reason it is returned
+   * separately: `Batch` merges every prop sharing a material into one mesh and says so in its own
+   * header — "a batched prop cannot move". A key taken out of a wardrobe has to disappear, so it
+   * is built from its own meshes parented to this group and nothing else.
+   */
+  hiddenKey: Group;
   /** Merged buffers, for the scene's dispose path. */
   geos: BufferGeometry[];
 }
@@ -106,7 +115,14 @@ function candle(b: Batch, m: FixtureMats, x: number, y: number, z: number, h = 0
   b.cyl(m.dark, 0.004, 0.004, 0.03, 4, x, y + h + 0.014, z);
 }
 
-type Ctx = { b: Batch; m: FixtureMats; aabbs: AABB[]; at: Record<string, Vector3> };
+type Ctx = {
+  b: Batch;
+  m: FixtureMats;
+  aabbs: AABB[];
+  at: Record<string, Vector3>;
+  /** Group for props that must stay individually hideable — see `HouseProps.hiddenKey`. */
+  key: Group;
+};
 
 // --- Hall ------------------------------------------------------------------------------------
 
@@ -587,8 +603,96 @@ function ritual({ b, m, aabbs, at }: Ctx): void {
   }
 }
 
-// --- Assembly --------------------------------------------------------------------------------
+/**
+ * The hidden room behind the red-box door — the father's book, and the first gate key with it.
+ *
+ * This is the room's *only* interactive content and it is deliberately tiny: the room is three metres
+ * under a storey the player has already walked, and what it has to deliver is one document and one
+ * key. Everything else in here is atmosphere and is imported (the wardrobe, the body, the necklace —
+ * see ModelProps); this function adds the two things that have to be *placed into* the wardrobe
+ * rather than stood beside it, and the anchor that makes the book readable.
+ *
+ * The wardrobe's box is x 16.55..18.05, y 0.2..1.64, z -6.085..-5.315, with its front toward +z, so
+ * "inside the wardrobe" means sitting the book and the key in the shallow band in front of the doors
+ * at about z -5.5. The doors are closed, which is the point: the book is *found*, not displayed, and
+ * a player who has read the note that sends them here is looking for exactly this.
+ *
+ * Both sit at the wardrobe floor rather than on a shelf, because the imported model has no shelf to
+ * measure and inventing one would put a floating plank in a $2 model. On the floor of a wardrobe is
+ * where a man hides the two things he does not want found together or apart.
+ */
+function hiddenRoom({ m, at, key }: Ctx): void {
+  // The wardrobe's own floor, and the front band its doors hang over.
+  // The wardrobe model sits on decorative feet that raise its internal floor ~0.46 m above the room floor (0.2 + 0.46 = 0.66).
+  const WARDROBE_FLOOR_Y = 0.2 + 0.46;
+  const facingZ = -5.62;
+  const midX = 17.3;
 
+  /*
+   * The clue anchor for the father's diary (`pbr_dark_diary.glb`).
+   *
+   * `HouseScene` walks `CLUES` and registers an interaction for every id that has an anchor here, so
+   * publishing `hidden.book` is the *entire* wiring for the prompt, the diary overlay, the toast and
+   * the tension raise. The 3D model itself is placed in ModelProps (`pbr_dark_diary.glb` at x = 17.05,
+   * y = 0.66, z = -5.62).
+   *
+   * The anchor stands 0.35 m into the room at z -5.27 rather than on the book itself. A reach of 2.0
+   * from inside the doors would otherwise put the prompt up while the player is still on the stair,
+   * a metre and a half behind a closed wardrobe door — the same mistake the hall's notice documents,
+   * where the anchor was left far enough out to be reachable from the wall it was pinned to.
+   */
+  at['hidden.book'] = new Vector3(midX - 0.25, WARDROBE_FLOOR_Y + 0.05, facingZ + 0.35);
+
+  /*
+   * The first gate key, beside the book — `key-iron.glb`'s shape at a third of the size it is placed
+   * at in the attic store, because there it is a wall-hung ornament and here it is the thing the
+   * player is looking for.
+   *
+   * Built from primitives for the same reason the book is: this file owns the colliders and the
+   * contact shadows, and ModelProps already has a `key-iron` row. A second row on that file would
+   * collide with the first in exactly the way the hidden wardrobe just did (see its note in
+   * ModelProps), so a small iron shape here is both simpler and safer.
+   *
+   * Unlike everything else in this file it does *not* go through `Batch`. It has to be takeable, and
+   * a batched prop cannot be hidden — `Batch` merges each material's geometry into one mesh, so
+   * toggling visibility on it would take the whole iron dressing of the house with it. These four
+   * meshes therefore live in their own group (`Ctx.key`), which `HouseScene` hides on pick-up.
+   *
+   * The bow, the shaft and two teeth, laid flat on the wardrobe floor. No collider: it is 18 cm of
+   * dressing and the wardrobe's own box is already a wall.
+   */
+  const keyY = WARDROBE_FLOOR_Y + 0.012;
+  const part = (geo: BufferGeometry): void => {
+    const mesh = new Mesh(geo, m.iron);
+    mesh.castShadow = false;
+    mesh.receiveShadow = false;
+    key.add(mesh);
+  };
+  // Authored around the origin, then the group is moved as one — so the hand-off can reposition the
+  // whole key by moving `key.position`, and the four parts never fall out of register with each other.
+  {
+    const shaft = new BoxGeometry(0.02, 0.012, 0.14);
+    shaft.rotateY(Math.PI * 0.25);
+    shaft.translate(-0.03, 0, 0);
+    part(shaft);
+    const bow = new CylinderGeometry(0.035, 0.035, 0.012, 8);
+    bow.translate(0.045, 0, 0.045);
+    part(bow);
+    // Two teeth, so it reads as a key and not as a nail the moment the lantern finds it.
+    const t1 = new BoxGeometry(0.035, 0.012, 0.012);
+    t1.rotateY(Math.PI * 0.25);
+    t1.translate(-0.105, 0, -0.055);
+    part(t1);
+    const t2 = new BoxGeometry(0.022, 0.012, 0.012);
+    t2.rotateY(Math.PI * 0.25);
+    t2.translate(-0.09, 0, -0.085);
+    part(t2);
+  }
+  key.position.set(midX - 0.08, keyY, facingZ);
+  key.name = 'hidden-key';
+}
+
+// --- Assembly --------------------------------------------------------------------------------
 /**
  * A contact shadow under every collider this file emitted. See ContactShadow for what they are.
  *
@@ -623,7 +727,11 @@ function shadows({ b, m, aabbs }: Ctx): void {
 export function buildProps(mats: FixtureMats): HouseProps {
   const group = new Group();
   group.name = 'props';
-  const ctx: Ctx = { b: new Batch(), m: mats, aabbs: [], at: {} };
+  // The one prop that has to stay movable, so it is parented to `group` for transform inheritance
+  // but never enters the Batch. See `HouseProps.hiddenKey`.
+  const hiddenKey = new Group();
+  group.add(hiddenKey);
+  const ctx: Ctx = { b: new Batch(), m: mats, aabbs: [], at: {}, key: hiddenKey };
   hall(ctx);
   hallway(ctx);
   bedroom(ctx);
@@ -631,10 +739,11 @@ export function buildProps(mats: FixtureMats): HouseProps {
   shaft(ctx);
   basement(ctx);
   ritual(ctx);
+  hiddenRoom(ctx);
   // Last, so it sees every collider the rooms pushed.
   shadows(ctx);
   const geos = ctx.b.flush(group, 'props');
-  return { group, aabbs: ctx.aabbs, anchors: ctx.at, geos };
+  return { group, aabbs: ctx.aabbs, anchors: ctx.at, hiddenKey, geos };
 }
 
 

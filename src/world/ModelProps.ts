@@ -23,7 +23,7 @@
 
 import { Box3, Group, Mesh, Vector3, type AnimationClip, type AnimationMixer, type Camera, type MeshBasicMaterial, type MeshLambertMaterial, type Object3D, type Scene, type Texture, type WebGLRenderer } from 'three';
 import { BASE_Y, HALF_T, WALL_H, expandRun, type Segment, type WallRun } from '@/world/HouseLayout';
-import { BACK_DOOR_E, BACK_DOOR_W, BEDROOM, BEDROOM_DOOR, CELLAR_DOOR, GATE, HALLWAY, HALL_WALLS, KITCHEN_DOOR, LIVING, LIVING_DOOR, POOJA_DOOR, RITUAL_DOOR, ROOMS, STAIR_DOOR, STORE_DOOR, UPPER, UPPER_DOOR, UPPER_INNER, UPPER_INNER_CUT, UP_HIDDEN_CUT, UP_HIDDEN_DOOR, UP_Y } from '@/world/HouseRooms';
+import { BACK_DOOR_E, BACK_DOOR_W, BEDROOM, BEDROOM_DOOR, CELLAR_DOOR, GATE, HALLWAY, HALL_WALLS, HID_FLIGHT_X0, HID_STAIR_WELL, KITCHEN_DOOR, LIVING, LIVING_DOOR, POOJA_DOOR, RITUAL_DOOR, ROOMS, STAIR_DOOR, STORE_DOOR, UPPER, UPPER_DOOR, UPPER_INNER, UPPER_INNER_CUT, UP_HIDDEN_CUT, UP_HIDDEN_DOOR, UP_HIDDEN_H, UP_HIDDEN_Y, UP_Y } from '@/world/HouseRooms';
 import type { AABB } from '@/player/FPController';
 import { aabbOf, leafBoxes } from '@/world/Fixtures';
 import { fitToBox, fitToHeight, playClip, type ModelLoader } from '@/world/ModelLoader';
@@ -602,6 +602,120 @@ const UP_SHRINE_WALL_PANELS: ModelPlacement[] = roomWallPanels('up-shrine', { mi
  */
 const UPPER_WALL_PANELS: ModelPlacement[] = roomWallPanels('upper', { minEyeY: 0 });
 
+/**
+ * The hidden room, and it was the last bare plaster in the house.
+ *
+ * Every other room got a damaged-wall facing when the audit found them — the hall, the hallway, both
+ * wings, the basement, the cellar shaft, the ritual room and the upper shaft. This one was missed for
+ * the same reason the flat's four runs were: it is *under* another storey and behind a door, so it is
+ * only ever seen by a player who has already found it, and it reads as "the room nobody has finished"
+ * rather than as a wall anyone forgot. Looking down the stairwell from the nook you are looking
+ * straight at these four runs, which is what the report was about.
+ *
+ * Its four runs are shell-drawn and none is `collideOnly`, so `roomWallPanels` faces all four — the
+ * same contract as every other room in this list, and no run needed touching. Its doorway is in the
+ * *nook's* west wall rather than in one of these, so there is no opening to fall out of the run and
+ * nothing here has to know about the door.
+ *
+ * `minEyeY: 0`, not the 1.9 the other upper-storey rooms carry. This room's floor is at 0.2, not 2.4:
+ * the player's eye is 1.9 while standing in it, so a 1.9 threshold would cull the panels away at
+ * exactly the one vantage they exist for. The 20 m cull does reach them from the ground floor, but
+ * unlike the flat's runs these are genuinely enclosed — the ground floor's own east wall stands
+ * between — so there is nothing to draw through.
+ */
+const UP_HIDDEN_WALL_PANELS: ModelPlacement[] = roomWallPanels('up-hidden', { minEyeY: 0 });
+
+/**
+ * The stairwell's own two sides, faced — the runs `roomWallPanels('up-hidden')` cannot place well.
+ *
+ * `roomWallPanels` derives each run's inward direction from the *room's* centre, and that derivation is
+ * only right for a run with room on one side and outside on the other. Both of these break it, and in
+ * opposite ways: the north lip's plaster is toward the *entry room*, north of it, and the south lip's
+ * well-facing side is north of it as well — both sit north of the room's centre line, so the derived
+ * direction puts one panel inside the stair, over the flight, and gives the other run a second facing on
+ * the room side, where `roomWallPanels` has already placed one.
+ *
+ * The other face of each run needs nothing here. The north lip's south face is inside the well, behind
+ * the flight, which fills its column exactly; the south lip's south face is inside the room, where it is
+ * the room's own wall facing continued over the lip line. That second one is also what stops the shaft
+ * reading as unscanned plaster from below — the report that put the room's own four rows in this list.
+ *
+ * The runs are copied from HouseRooms' list rather than restated from measurements, and both rise 0.45
+ * over `UP_Y`. `expandRun` picks a run's own y1 up in preference to the two arguments, so passing
+ * `UP_HIDDEN_Y` as floorY is what keeps the facings running from the room's own floor — where the flight
+ * and the room are — up to the top of the parapet.
+ */
+const UP_HIDDEN_STAIRWELL_PANELS: ModelPlacement[] = [
+  // North lip, inward toward +z: the face the player sees across the well from the entry room.
+  ...wallPanels(
+    'up-hidden-kerb-north',
+    { x1: HID_STAIR_WELL.x0, z1: HID_STAIR_WELL.z1 + HALF_T, x2: HID_STAIR_WELL.x1, z2: HID_STAIR_WELL.z1 + HALF_T, y1: UP_Y + 0.45 },
+    0,
+    1,
+    0,
+    UP_HIDDEN_Y,
+    UP_Y + 0.45,
+    { minEyeY: 0 },
+  ),
+];
+
+/**
+ * The nook, faced — the room the hidden door opens off, whose walls the model draws as bare boards.
+ *
+ * This is the one place in the house where `roomWallPanels` cannot be used, and the reason is worth
+ * stating because it is invisible from the outside. Every run round the nook is `collideOnly`, because
+ * `room-upper.glb` draws them itself, and `roomWallPanels` skips `collideOnly` by design — so the nook
+ * was never faced and its walls still read as raw boards. Every other `collideOnly` run in the flat
+ * *should* be skipped: the model gives them scanned masonry, and a facing there would put two walls in
+ * the same place. The nook is the exception, because the boards the model draws for it are the one
+ * thing in the flat that does not look finished. Reported as "where are the walls, where is the cover".
+ *
+ * Written out rather than derived, for a second reason: `roomWallPanels` takes its inward direction
+ * from the *room's* centre, and the nook is a corner of a much larger flat — the flat's centre is north
+ * of the nook's north wall, so the derived inward for that run points the wrong way and the panel would
+ * hang on the far side of its own wall. Each run below states its inward vector explicitly.
+ *
+ * No `collide`: the model already stops the player and a facing that also collided would fight it. The
+ * runs and their openings are copied from HouseRooms' list, so the hidden door's hole comes through as
+ * a hole in the panel rather than being faced over.
+ */
+const NOOK = { x0: 18.4, x1: 21.3, z0: -0.99, z1: 0.49 };
+/** The imported flat's ceiling, 2.89 above its floor — see the `upper` room's `height`. */
+const UPPER_CEIL = UP_Y + 2.89;
+
+const NOOK_WALL_PANELS: ModelPlacement[] = [
+  // South run, inward toward +z (the nook).
+  ...wallPanels('nook-wall-south', { x1: NOOK.x0, z1: NOOK.z0, x2: NOOK.x1, z2: NOOK.z0 }, 0, 1, 0, UP_Y, UPPER_CEIL),
+  // North run, inward toward -z. It carries the opening through to the corridor behind.
+  ...wallPanels(
+    'nook-wall-north',
+    { x1: NOOK.x0, z1: NOOK.z1, x2: UPPER.x1, z2: NOOK.z1, openings: [{ at: 20.645, half: 0.825 }] },
+    0,
+    -1,
+    Math.PI,
+    UP_Y,
+    UPPER_CEIL,
+  ),
+  // East run, inward toward -x.
+  ...wallPanels('nook-wall-east', { x1: 21.12, z1: -1.1, x2: 21.12, z2: 3.9 }, -1, 0, -Math.PI / 2, UP_Y, UPPER_CEIL),
+  // West run, inward toward +x — and the hidden door's own opening, so the panel stops at its jambs.
+  ...wallPanels(
+    'nook-wall-west',
+    {
+      x1: 18.61,
+      z1: -2.0,
+      x2: 18.61,
+      z2: 0.6,
+      openings: [{ at: UP_HIDDEN_DOOR.z, half: UP_HIDDEN_DOOR.half, y1: UP_HIDDEN_DOOR.top }],
+    },
+    1,
+    0,
+    Math.PI / 2,
+    UP_Y,
+    UPPER_CEIL,
+  ),
+];
+
 /** Every faced run in the house, in one list, for the startup gate to filter. */
 const WALL_PANELS: ModelPlacement[] = [
   ...HALL_WALL_PANELS,
@@ -623,6 +737,9 @@ const WALL_PANELS: ModelPlacement[] = [
   ...UP_CHILD_WALL_PANELS,
   ...UP_SHRINE_WALL_PANELS,
   ...UPPER_WALL_PANELS,
+  ...UP_HIDDEN_WALL_PANELS,
+  ...UP_HIDDEN_STAIRWELL_PANELS,
+  ...NOOK_WALL_PANELS,
 ];
 
 /**
@@ -1497,6 +1614,17 @@ export const MODEL_PLACEMENTS: ModelPlacement[] = [
   // sealed bathroom corners. See UPPER_WALL_PANELS for why the room reads as already faced and how the
   // eleven walls the model *does* draw stay out of this.
   ...UPPER_WALL_PANELS,
+  // The hidden room's four runs, faced like every other room. Last in the upper group because it is
+  // the last room on that storey to be reached, and the only one that is *under* it. See
+  // UP_HIDDEN_WALL_PANELS for why this was missed and why its cull threshold is not the 1.9 the rest
+  // of the upper rooms use.
+  ...UP_HIDDEN_WALL_PANELS,
+  // The stairwell's own faces, the two of them that `roomWallPanels` cannot derive. See
+  // UP_HIDDEN_STAIRWELL_PANELS, and the four runs in HouseRooms they stand on.
+  ...UP_HIDDEN_STAIRWELL_PANELS,
+  // The nook's four runs, written out by hand because every one of them is `collideOnly`. See
+  // NOOK_WALL_PANELS for why this is the one room where roomWallPanels cannot be used.
+  ...NOOK_WALL_PANELS,
   // The flat's own front door, filling that opening. Measured from the file: its axes are
   // 0.5715 : 1 : 0.1353, so height 2.56 makes it 1.463 wide x 0.346 thick and the frame's head lands
   // 6 cm above the opening's 4.9 header — the overlap is the point, at 2.5 the two would have met on a
@@ -1519,6 +1647,12 @@ export const MODEL_PLACEMENTS: ModelPlacement[] = [
    * basement rows drop it. The file's axes are 0.5715 : 1 : 0.1353, so 2.15 makes it 1.229 wide and
    * 0.291 thick, which fills the 1.24 m carve without lapping the jambs. It only hangs here; the swing
    * and the red lock are armHiddenDoor()'s.
+   *
+   * The 1.229 is the *frame's* width, and the leaf inside it is 1.01: `armHiddenDoor` builds the leaf's
+   * collider out of the placed model's own box, and forcing `fit.width` to 1.229 widened that collider
+   * into two 6.8 m bars at 2.42 .. 4.57 either side of the door — the flat cut in half, the nook sealed
+   * off, and the west strip blocked at z -1.42 by a wall nobody can see. The reveal in HouseScene lines
+   * the 11.5 cm of slot either side of the leaf down to 7.5 cm, and that is what covers the rest.
    */
   {
     name: 'door.glb',
@@ -1532,6 +1666,184 @@ export const MODEL_PLACEMENTS: ModelPlacement[] = [
     yaw: Math.PI / 2,
     minEyeY: 0.5,
     albedo: 2.0,
+  },
+  /**
+   * The hidden stair, inside the door's own column — the geometry behind `hiddenStairFloors()`.
+   *
+   * The user asked for this by name: the flight had collision and no model, so from the side it read as
+   * floating boards with gaps between them rather than as steps. Both other stairs in the house are
+   * `stair-wood.glb` and so is this one, as a third row on one file — `clone`, hence the distinct id.
+   *
+   * Fitted, not authored. The file is a grand eight-tread stair — 9.24 m long, 5.93 m tall, 7.43 m wide,
+   * treads rising 0.75 m — and this well is 2.4 x 2.2 x 1.24 with a 0.275 m rise, so `fit` pulls each axis
+   * to the well's own box. Same bargain the cellar stair strikes (see its row above): the walkable path is
+   * `hiddenStairFloors()`' eight 0.275 m rects, and the model is what those steps *look* like. A 0.75 m
+   * authored rise is over double the controller's 0.35 m step-up, so the geometry could not be the path
+   * even if it fit.
+   *
+   * The rail is **kept**, unlike the cellar row which drops it. There the shaft is 3.0 m and the rail's
+   * 2.68 m would have squashed the treads two thirds up it; here the flight is short and steep, and a rail
+   * is what sells a descent into a wall this narrow as a stair rather than a ramp. It costs 0.94 m of
+   * bbox depth, which the 1.24 m well absorbs.
+   *
+   * yaw pi: this flight's top is at the door end of the well (east). yaw 0 was tried on the reasoning
+   * that the model rises toward -x as authored, but in play the flight showed up reversed, with its low
+   * end at the door. See the `yaw` field.
+   * x/z centre it on the well, taken from `HID_STAIR_WELL` rather than restated so the two cannot drift;
+   * y seats it on the room floor, which is where its bottom tread stands and where the top tread lands at
+   * `UP_HIDDEN_Y` + 2.2, flush with `UP_Y`.
+   *
+   * No `shadow`: this stair *is* the floor of its own well, and the multiply quad would darken its own
+   * first tread — the cellar row's reasoning. No `collide`: the well walls it in and a box round the
+   * flight would wall off the walkway. No `albedo`: `clone(true)` shares the upper stair's materials and
+   * `brighten()` dedups on the material, so the 2.2 those rows applied already lands here.
+   *
+   * Placed before the front-door row for the same load-bearing reason the hidden door is: it is a clone
+   * of a file whose earlier row gets re-parented by a placement hook.
+   */
+  {
+    id: 'hidden-stair.glb',
+    name: 'stair-hidden.glb',
+    height: UP_HIDDEN_H,
+    fit: {
+      // The flight's span, not the well's: the well runs HID_HEADROOM further west for head clearance.
+      width: HID_STAIR_WELL.x1 - HID_FLIGHT_X0,
+      height: UP_HIDDEN_H,
+      depth: HID_STAIR_WELL.z1 - HID_STAIR_WELL.z0,
+    },
+    x: (HID_FLIGHT_X0 + HID_STAIR_WELL.x1) / 2,
+    y: UP_HIDDEN_Y,
+    z: (HID_STAIR_WELL.z0 + HID_STAIR_WELL.z1) / 2,
+    drop: ['012woodstairsrail'],
+    // Rotated 180° per playtest: at yaw 0 the flight read as rising away from the door (west) — the
+    // top tread must sit at the door end (east), flush with UP_Y, where hiddenStairFloors() starts.
+    yaw: Math.PI,
+    albedo: 2.2,
+  },
+  /**
+   * What is *in* the hidden room. Until now the room was four walls, a floor and a stair down to it.
+   *
+   * Everything here carries `minEyeY`, and all of it for the same reason the room does not exist to a
+   * player on the storey above: the room sits at 0.2 with its ceiling at 2.4, so while the eye is up at
+   * 4.0 the whole room is one wall's thickness below the boards. With no occlusion culling, the radius
+   * test calls all of this near — the room's centre is about 3 m from the doorway — and would draw a
+   * wardrobe and a body through a solid floor. `minEyeY: 1.2` puts the band below the storey's own eye
+   * height, so the contents appear on the stair, which is the first place the room can be seen at all.
+   *
+   * All three sit clear of the stair's column (`x 16.21..18.61`, `z -1.08..0.16`): nothing may stand in
+   * the well, or the flight's own treads would pass through it.
+   */
+  /**
+   * The wardrobe, against the room's south wall, facing north into it.
+   *
+   * **The three numbers below are in the file's axes, not the world's, and the smallest one is the
+   * one called `width`.** That reads like a mistake and is not; this row cost three attempts and the
+   * reason is worth keeping.
+   *
+   * Two facts compound. First, `fitToBox` scales in *source* orientation and applies `yaw` afterwards,
+   * so a `fit` written in world terms lands on the wrong two axes as soon as there is a yaw (see its
+   * comment). Second, `glb-bounds` reports this file as `1.0000 : 0.9591 : 0.5119` with x longest —
+   * but that is **not** the box that renders. Fourteen primitives on rotated wrappers, and the box the
+   * renderer actually submits is `0.284 : 2.513 : 8.05`: hair-thin in x, tall in y, and *eight times*
+   * long in z. Scaling per the reported ratios produced a wardrobe 2.93 m deep and 0.39 m wide, lying
+   * crosswise through the room, which is a convincing thing to see in a screenshot and completely
+   * wrong. The live proportions were read off the placed object (`tools/probe-fit.mjs`) rather than
+   * taken from the file-level tool, and the two disagree by a factor of 16 on x.
+   *
+   * **This row loads `wardrobe-hidden.glb`, a byte-identical copy of `wardrobe-chateau.glb`, and that
+   * copy is the fix rather than a tidiness preference.**
+   *
+   * The living room already places `wardrobe-chateau.glb` and the loader caches by **file**, handing
+   * every caller the same `gltf.scene` Group. Two rows on one file therefore do not place two
+   * objects — they re-fit one, in sequence. This row was written that way first and cost four
+   * attempts: it silently inherited the living room's `yaw: pi/2` and its `height: 2.5` scale, and
+   * every measurement came back `0.394 x 1.44 x 2.93` no matter which numbers were written here,
+   * through HMR and through cold reloads with the cache disabled. The numbers were never the problem.
+   *
+   * `clone: true` is the documented remedy and did not settle it either: measured after switching to
+   * it, the box came back `2.93 x 1.44 x 0.394` — the axes had swapped but neither the 1.5 nor the
+   * 0.77 was honoured, because a clone taken *after* an earlier row has fitted the group inherits that
+   * fit and `fitToBox` then scales on top of it. The clone caveat in `ModelPlacement` says as much:
+   * "a source row with a yaw, then a copy without one" is the hazard, and this is that shape.
+   *
+   * So the model gets its own file. A second cache entry cannot collide with the first, the row needs
+   * no `clone`, and the numbers below are finally world axes and mean what they say: 1.5 wide,
+   * 1.44 tall, 0.77 deep. The 382 KB duplicate is the honest price of two differently-sized wardrobes
+   * from one download, and it is cheaper than a placement that is only correct after a reload.
+   *
+   * It stands at z -5.7, against the wall furthest from the doorway, spanning x 16.55..18.05. That
+   * clears the stairwell column (x 16.21..18.61, z -1.08..0.16) entirely — the two overlap in x and
+   * not in z. Deliberate: the player comes down the stair looking west, and the wardrobe is what the
+   * lantern finds first.
+   *
+   * `collide` — it is the one thing in here a body should not walk through, and the room is 6 x 6.6 m
+   * with nothing else competing for the floor. No `shadow`: the room is a sealed box under the storey
+   * with one stairwell for light, and a contact quad under a wardrobe 11 m from the doorway would be a
+   * bright patch in the dark.
+   */
+  {
+    name: 'wardrobe-hidden.glb',
+    id: 'hidden-wardrobe.glb',
+    height: 2.18,
+    x: 17.3,
+    y: UP_HIDDEN_Y,
+    z: -5.62,
+    collide: true,
+    albedo: 1.4,
+    minEyeY: 1.2,
+  },
+  /**
+   * The mother, seated inside the wardrobe in a deep crouch / huddled sitting position in the right corner.
+   *
+   * Placed inside the right bay of `hidden-wardrobe.glb` on its floor boards. The seated model
+   * (`skeleton-mother-sitting.glb`) is posed in a deep squat/crouch with knees drawn up high to the chest,
+   * arms folded across the knees, hands draped down, and head resting forward — matching the reference posture.
+   * Placed on the wardrobe shelf at y = UP_HIDDEN_Y + 0.46 (= 0.66 m), centered in the right bay (x = 17.52, z = -5.68).
+   */
+  {
+    name: 'skeleton-mother-sitting.glb',
+    id: 'hidden-mother.glb',
+    height: 1.05,
+    x: 17.52,
+    y: UP_HIDDEN_Y + 0.46,
+    z: -5.68,
+    yaw: -0.15,
+    minEyeY: 1.2,
+  },
+  /**
+   * Her necklace, worn: an Egyptian collar round the base of her neck (it replaced the heart pendant).
+   *
+   * The collar is a ring that drapes — high at the clasp (model -z), low at the front (+z) — so with
+   * her yaw its front lies on her upper chest, facing the wardrobe door. `height` is its longest axis,
+   * the width across: 0.24 m, about half again the neck's 0.15, so it reads as jewellery from the
+   * doorway rather than a thread. x/z are the neck's own vertex centre (17.559, -5.854) measured on the
+   * fitted skeleton (1.05 tall, base 0.66); y 1.38 and z -5.864 came out of a sweep over size, height
+   * and depth as the pose where no collar vertex is within 4 mm of bone (no clipping) and the most sit
+   * within 1.5 cm of it (resting on her, not floating).
+   */
+  {
+    name: 'necklace-egyptian.glb',
+    id: 'hidden-necklace.glb',
+    height: 0.24,
+    x: 17.559,
+    y: 1.38,
+    z: -5.864,
+    yaw: -0.15,
+    minEyeY: 1.2,
+  },
+  /**
+   * The father's diary, placed inside the hidden room's wardrobe on its internal shelf in the left bay.
+   */
+  {
+    name: 'pbr_dark_diary.glb',
+    id: 'hidden-diary.glb',
+    height: 0.28,
+    x: 17.05,
+    y: UP_HIDDEN_Y + 0.46,
+    z: -5.62,
+    yaw: 0.18,
+    albedo: 1.3,
+    minEyeY: 1.2,
   },
   { name: 'door.glb', height: 2.56, x: UPPER.x0, y: UP_Y, z: UPPER_DOOR.z, yaw: Math.PI / 2, albedo: 2.0 },
   // The leaf for the doorway carved through the flat's east partition. Like the main gate and unlike

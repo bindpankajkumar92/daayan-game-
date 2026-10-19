@@ -93,8 +93,26 @@ export class NoiseSystem {
   /** Seconds the level must sit under `REARM_LEVEL` before the alert can fire again. */
   private static readonly REARM_DELAY = 0.4;
 
+  /**
+   * Seconds between repeat alerts while the bar is held at max.
+   *
+   * The player asked for "jab jab noise limit hit, tab tab she comes" — every max must bring her.
+   * The old edge-only gate meant a bar pinned at 1.0 by continuous sprinting fired once and then
+   * went silent while she timed out back to patrol. A fresh crossing (bar dipped below ALERT and
+   * rose again) always fires immediately; while held above ALERT, re-fire on this cooldown so she
+   * keeps getting the latest position instead of giving up.
+   */
+  private static readonly REPEAT_COOLDOWN = 5.0;
+
   /** Consecutive seconds without running, for both the decay grace and the re-arm delay. */
   private quietFor = 0;
+
+  /** Game time accumulated through update(), for the repeat cooldown. */
+  private time = 0;
+  /** Time the last alert fired. */
+  private lastAlertAt = -Infinity;
+  /** Was the level at/above ALERT after the last addNoise/decay. Drives edge detection. */
+  private wasAbove = false;
 
   /** Consecutive seconds without run *intent*, tracked only for diagnostics. */
   private intentFor = 0;
@@ -172,20 +190,35 @@ export class NoiseSystem {
     }
   }
 
+  private fireAlert(): void {
+    this.hasAlerted = true;
+    this.lastAlertAt = this.time;
+    globalBus.emit('noise:alert', {
+      pos: this.player.getPosition(),
+      level: this.level,
+    });
+  }
+
   private addNoise(amount: number): void {
+    const prevAbove = this.wasAbove;
     this.level = Math.min(1.0, this.level + amount);
+    const nowAbove = this.level >= NoiseSystem.ALERT_LEVEL;
     // Crossing the alert level, not landing on 1.0. See `ALERT_LEVEL`: the bar reads as full from the
     // moment it enters its red band, so that is the moment the alert has to fire or the UI is lying.
-    if (this.level >= NoiseSystem.ALERT_LEVEL && !this.hasAlerted) {
-      this.hasAlerted = true;
-      globalBus.emit('noise:alert', {
-        pos: this.player.getPosition(),
-        level: this.level,
-      });
+    if (nowAbove) {
+      if (!prevAbove) {
+        // Fresh hit — always fires, even if the last max was seconds ago.
+        this.fireAlert();
+      } else if (this.time - this.lastAlertAt >= NoiseSystem.REPEAT_COOLDOWN) {
+        // Held at max while still making noise — re-ping her with the latest position.
+        this.fireAlert();
+      }
     }
+    this.wasAbove = nowAbove;
   }
 
   public update(dt: number, isRunning: boolean): void {
+    this.time += dt;
     const mult = this.getDistanceMultiplier();
 
     if (isRunning) {
@@ -213,6 +246,10 @@ export class NoiseSystem {
 
     // Natural decay when quiet
     this.level = Math.max(0, this.level - NoiseSystem.DECAY_RATE * dt);
+    if (this.level < NoiseSystem.ALERT_LEVEL) {
+      // Dipped out of the red band — next crossing is a fresh hit and fires immediately.
+      this.wasAbove = false;
+    }
     // Re-arm only after genuinely going quiet, and only with a margin below the alert level, so the
     // next real max is a clean crossing rather than a flicker at the boundary.
     if (this.level < NoiseSystem.REARM_LEVEL && this.quietFor >= NoiseSystem.REARM_DELAY) {

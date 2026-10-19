@@ -89,6 +89,14 @@ export class GameState {
     return 3 - this.locks.size;
   }
 
+  /**
+   * Has this clue been read? A pure query, unlike `markSeen`.
+   *
+   * The two are not interchangeable: `markSeen` *consumes* the first-read flag and returns whether
+   * this call was that first read, so calling it merely to test the flag makes the real handler see
+   * a second read and silently drop its one-off beat. Anything that wants to add a side effect to
+   * another handler's first run — as the hidden-room book does with its key — must ask with this.
+   */
   hasSeen(id: string): boolean {
     return this.seen.has(id);
   }
@@ -169,9 +177,16 @@ export class GameState {
    * Turn the red key in the hidden door. False when the key is not held or the door is already open,
    * so the caller can leave the prompt alone rather than playing feedback for nothing — the same
    * contract as `openLock`.
+   *
+   * `unlockedForTesting` opens it without the key and without granting one. It exists so the room
+   * behind the door can be walked and checked while the key's own chain is still being built; see
+   * `HiddenDoor.UNLOCKED_FOR_TESTING`, which is the one line that turns it on. It still sets
+   * `hiddenOpen`, deliberately: every downstream reader keys off that flag, and a leaf that swings
+   * while the state says the door is shut is an inconsistency waiting to be debugged later.
    */
-  openHidden(): boolean {
-    if (!this.redKey || this.hiddenOpen) return false;
+  openHidden(unlockedForTesting = false): boolean {
+    if (this.hiddenOpen) return false;
+    if (!this.redKey && !unlockedForTesting) return false;
     this.hiddenOpen = true;
     return true;
   }

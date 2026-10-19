@@ -47,6 +47,21 @@ export class InteractionSystem {
     this.items.set(i.id, i);
   }
 
+  /**
+   * Every registered id, and the items themselves.
+   *
+   * For the dev probe only — see `__daayan.interactables()` in HouseScene. Both exist because a
+   * clue that publishes an anchor and a clue that does not are indistinguishable in a screenshot,
+   * and the difference is entirely whether the anchor arrived here.
+   */
+  listIds(): string[] {
+    return [...this.items.keys()];
+  }
+
+  list(): Interactable[] {
+    return [...this.items.values()];
+  }
+
   remove(id: string): void {
     this.items.delete(id);
   }

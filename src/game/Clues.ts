@@ -423,12 +423,12 @@ export const CLUES: Record<string, ClueSpec> = {
    * last line hands over the first gate key, which is the other thing in the wardrobe with it.
    */
   'hidden.book': {
-    prompt: "Read your father's book",
+    prompt: "Read your father's diary",
     raises: 'TERRIFYING',
     firstToast: 'He wrote it for you. He knew you would come back here.',
     doc: {
-      title: "Your father's book",
-      sub: 'The hidden room — in the wardrobe, wrapped in oilcloth',
+      title: "Father's Diary",
+      sub: 'The hidden room — inside the wardrobe',
       style: 'diary',
       lines: [
         'If you are reading this, then the saint was right and everything I did to keep you out of this house was for nothing. So I will start with the thing I should have told you years ago and did not, because I was a coward, and because I wanted you to have a mother who died ordinarily.',
@@ -437,7 +437,7 @@ export const CLUES: Record<string, ClueSpec> = {
         'I told you a fire took your mother. There was no fire. She died at the top of the stairs with her arms round you and she did not let go, and that is the entire reason you are alive to read this. I could carry one of you. I carried you. I have not had a day since that I did not hear it.',
         'I brought her here. It was the one door in this house that woman could not open, and it was the best I could do for her. Then I wrote this and I left, because I thought I could still stop it, and I did not come back.',
         'Go down to the black room. Open the box. Put the lamp oil in it and burn it. Not to hurt him \u2014 he is not the thing in this house that wants you, he never was. Burn it so that he can go, because while he is in that box she will never stop.',
-        'And take the key. It is here in the wardrobe with this book. It is one of the three that hold the gate.',
+        'And take the key. It is here in the wardrobe with this diary. It is one of the three that hold the gate.',
       ],
     },
   },

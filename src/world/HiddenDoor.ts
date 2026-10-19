@@ -39,6 +39,20 @@ const OPEN_TIME = 1.6;
 /** See InnerDoor.SETTLE_TIME: one more attempt to move the keep-out onto a leaf that has swung. */
 const SETTLE_TIME = 0.5;
 
+/**
+ * TEMPORARY — the door opens without the red key, so the room behind it can be walked and tested.
+ *
+ * This is the whole of the bypass: set it to `false` and the key requirement is back, with the prompt
+ * returning to "Locked" / "Turn the red key" and `openHidden` refusing again. Nothing else needs
+ * touching, which is why the check lives in one named constant rather than being spread through the
+ * label and the handler.
+ *
+ * The red key itself is untouched by this — `openHidden(true)` does not grant it — so the key's own
+ * chain (pick it up under the gurney pillow, HUD slot, toast) still behaves exactly as it will in the
+ * final build and can be tested on its own by flipping this back.
+ */
+const UNLOCKED_FOR_TESTING = true;
+
 /** The leaf's parts, by the names door.glb ships. The frame is dropped at placement. */
 const LEAF_PARTS = ['door_', 'handle'];
 
@@ -129,13 +143,17 @@ export function armHiddenDoor(root: Object3D, deps: HiddenDoorDeps): void {
     reach: 2.2,
     label: () => {
       if (busy || open) return null;
+      // While the bypass is on the prompt says what the press will do, rather than naming a key the
+      // player is not carrying — a "Locked" that opens anyway is the kind of thing that gets reported
+      // as a bug by whoever plays this next.
+      if (UNLOCKED_FOR_TESTING) return 'Open the hidden door';
       return deps.state.hasRedKey() ? 'Turn the red key' : 'Locked';
     },
     onUse: () => {
       if (busy || open) return;
       // Refuses silently without the key, which is what `openHidden` returning false means. The prompt
       // already says "Locked", so there is nothing a toast could add.
-      if (!deps.state.openHidden()) return;
+      if (!deps.state.openHidden(UNLOCKED_FOR_TESTING)) return;
       busy = true;
       open = true;
 
@@ -159,7 +177,13 @@ export function armHiddenDoor(root: Object3D, deps: HiddenDoorDeps): void {
           if (!landed) settle();
         }
       });
-      deps.toast('The key turns, and the wall opens where there was no door.');
+      // The line differs while the bypass is on, so a run that skipped the key is obvious in a
+      // screenshot rather than silently indistinguishable from the real thing.
+      deps.toast(
+        UNLOCKED_FOR_TESTING && !deps.state.hasRedKey()
+          ? 'The panel swings open. (Testing — the key is not wired up yet.)'
+          : 'The key turns, and the wall opens where there was no door.',
+      );
     },
   });
 }

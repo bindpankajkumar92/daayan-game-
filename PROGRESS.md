@@ -1,5 +1,27 @@
 # Daayan — Progress Log
 
+## 2026-09-16 — every noise-max brings her to the exact spot, wherever she is
+
+The report, with a screenshot: bar full red, overlay `STATE: RETURN_TO_PATROL WHY: search-timeout
+SOUND @0.17 SPEED 0.00`. She had investigated once, timed out, and gone back to patrol while the
+bar was still maxed. Two halves, both real:
+
+1. **The bar fired once and then went silent.** `NoiseSystem` gated on `hasAlerted` until the level
+   fell below 0.3 + 0.4 s quiet. A bar pinned at 1.0 by continuous sprinting never re-armed, so the
+   second, third, fourth max never emitted. Now: a fresh crossing (dipped below 0.75, rose again)
+   always fires immediately; while held above 0.75, re-fire every `REPEAT_COOLDOWN = 5 s` with the
+   latest position. 30 s held sprint: 1 alert -> 5 alerts, still bounded (not per frame).
+2. **The alert could be eaten by the hearing model.** `deliverNoiseAlert` ran through
+   `hearing.perceive` with a 60 m range floor, but falloff + wall damping could still drop a far max
+   below `hearingLoudThreshold` (medium) or `hearingThreshold` (null = nothing). Now the alert
+   bypasses perception entirely: exact position queued in `pendingAlert`, consumed every tick in
+   `buildContext` into `loudSound` + `memory.noteHeard(..., 1.0)` + overlay sound. Every state that
+   handles `loudSound` (IDLE/PATROL/SUSPICIOUS/INVESTIGATE/SEARCH/RETURN) routes to INVESTIGATE, and
+   INVESTIGATE expiry routes to SEARCH — so a max always ends in her searching the spot.
+
+`npm run check:ai` — 9 suites pass (noise-bar updated for re-ping, playtest BUG 3: 71.5 m walk to
+0.53 m of a 39.5 m-away max). `tsc --noEmit` + `vite build` clean.
+
 ## 2026-09-14 — THE bar bug, third time: a sprinting player in a small room was not "running"
 
 The player reported the same symptom a third time, with a fresh recording. They were right again, and
@@ -1084,4 +1106,469 @@ The throwaways for this round are still on disk rather than deleted: `tools/_pos
 produced the shipped numbers, `tools/_live.mjs` and `tools/_fwd.sh` the render harness, and `tools/_sweep.js`,
 `tools/_gap.js`, `tools/_fing.js` and `tools/_align.js` the four superseded attempts, each of which says so in
 its own header.
+
+
+---
+
+## Hidden room behind the red-box door — step 2, and the floor bug it exposed
+
+### What was built
+
+The door the user meant all along — the one with the red box painted into `room-upper.glb`'s own texture, on the
+x 18.61 `collideOnly` wall — is now hinged and gated on the red key:
+`E Locked` -> `E Turn the red key` -> the leaf swings 100 degrees over 1.6 s with the toast *"The key turns, and
+the wall opens where there was no door."* Behind it, a stair descends west and opens into a procedural cellar
+room (`UP_HIDDEN`, x 15.6..21.6, z -6.2..0.4, floor 0.2, height 2.2) built from the same room spec every other
+room in the house uses — floor, ceiling, four walls, plaster tone. No imported building interior this time; that
+was the mistake of the first attempt and it is the thing the user rejected.
+
+### The bug: cutting the stairwell is not the same as cutting the room
+
+`HID_STAIR_WELL` is the doorway's own footprint, 2.4 m west of x 18.61 and as wide as the door. It was the only
+thing subtracted from the upper storey's floor, on the reasoning that the opening the stair descends through is
+the opening the room needs. It is not. The room is 6 m by 6.6 m and all of it sits under y 2.4 with the storey's
+slab above it, so the slab has to be absent over the *room*, not just over the *stair*.
+
+Measured absent the fix, probing `groundYAt` at head height across the room:
+
+```
+z -5.0 and z -2.5 read 2.4 at every x   ->  the whole room roofed over
+x 16.2 and west read 2.4                ->  the stair's last two treads unreachable
+```
+
+So the player walked down the steps and found solid floor at head height instead of a room, and the "ceiling"
+the camera showed from below was that slab seen edge-on — a surface that reads as a lid and is walked on like a
+floor. This is the failure mode to watch for in this house: `groundYAt` returns the highest rect within
+`stepUpHeight` of the feet, so floor that should not exist there does not look like a mistake, it looks like
+ground.
+
+### The bug inside the fix
+
+Replacing `HID_STAIR_WELL` with the room's full rectangle overcorrected, and the second failure was the mirror of
+the first. The room reaches x 21.6; the entry room's floor reaches only the doorway at 18.61. So a hole to 21.6
+ate the floor of the room the player *arrives* in — `groundYAt` came back 0.2, the cellar's own floor, from
+19.4 all the way east to 21.45, i.e. the entry room became a hole they would fall down on the way to the door.
+
+The correct hole is the intersection of the room with the span that is genuinely open above it:
+
+```
+x0 = UP_HIDDEN.x0     15.6
+x1 = UP_HIDDEN_DOOR.x 18.61   the doorway; east of it the entry room's floor is real and stays
+z0 = UPPER.z0         -1.93   the storey's own south edge; south of it UP_STORE/UP_CHILD stand
+z1 = UP_HIDDEN.z1     0.4
+```
+
+South of z -1.93 the rear wing's floor is genuinely above the room and stays; that is also why the room needs its
+own ceiling only over the northern strip, and why the two agree at 2.4 rather than fighting.
+
+### Verified
+
+`npx tsc --noEmit` clean. `npm run check:ai` -> **ALL SUITES PASS**. `npm run build` clean, 857.27 kB /
+239.02 kB gzip. Screenshots in `.look/g_*.png` and `.look/h_*.png`.
+
+Floor table, probing with the feet seeded at 2.4 so `reach` is in range — the stair descends exactly 0.275 per
+tread and the room is flat at 0.2:
+
+```
+x 18.50 -> 2.125   x 17.70 -> 1.300   x 16.90 -> 0.750
+x 18.30 -> 1.850   x 17.50 -> 1.300   x 16.70 -> 0.475
+x 18.10 -> 1.850   x 17.30 -> 1.025   x 16.50 -> 0.200
+```
+
+Upper storey restored, sampled with feet at 2.4: entry room 19.4 / 20.5 / 21.4 / 22.0 all 2.4; store and child
+16,-4 and 20,-4 both 2.4. From the room's own level the whole footprint reads 0.2.
+
+### Still open
+
+- The stair has **collision but no geometry**. Both other stairs in the house get their treads from an imported
+  model (`stair-wood.glb`, `stair-cellar.glb`) and their floor rects are collision only; this one has rects and
+  nothing else, so from the side it reads as floating boards with gaps between them rather than as steps.
+  `h_room_n.png` shows it plainly. Needs either `stair-wood.glb` re-used here or procedural treads.
+- The room is empty. `skeleton-mother.glb`, `wardrobe-chateau.glb`, `necklace-heart.glb` and `key-iron.glb` are
+  all already in `public/assets/models/`, and `Clues.hidden.book` is written and unused.
+- Reading the door's own carve: the opening's edge is raw where the wall was cut.
+## Hidden room behind the red-box door — step 3: the stairwell covered on all four sides
+
+### What was built
+
+The report was "stairwell ko chaaro taraf se cover karo". From the entry room the well was an open shaft — 2.4 by
+1.24 m with the room visible through it from three sides — and from the stair itself there was nothing at all to
+either hand, so the flight read as boards floating in a void. Three layers, all of them keyed to the two holes
+rather than to a chosen line:
+
+- **The well's two long sides.** Two runs added to `ROOMS['up-hidden'].walls`, on `HID_STAIR_WELL.z1 + HALF_T`
+  and `HID_STAIR_WELL.z0 - HALF_T`: the north cheek rises to `UP_Y + 0.45` because the entry room's floor is on
+  the other side of it, the south cheek stops on `UP_Y` because south of it there is nothing above the floor for
+  it to continue into.
+- **Two kerbs over the edges where the drawn floor lies.** The west kerb runs `HID_ROOM_HOLE.x0`, z 0.16 to
+  -1.93; the south kerb runs z `HID_ROOM_HOLE.z0 - HALF_T` from `HID_ROOM_HOLE.x0 + HALF_T` east to 18.61, which
+  leaves the store's 1.3 m doorway open exactly as the cross wall's gap does. Both start 1 cm under `UP_Y` — the
+  patch is at `UP_Y - 0.004` and two coincident planes are the one case a depth buffer cannot call.
+- **The well's two own facings**, hand-written as `UP_HIDDEN_STAIRWELL_PANELS` in ModelProps because
+  `roomWallPanels` derives each run's inward direction from the *room's* centre and this is a corner of a larger
+  floor plan, not a room with a centre anyone can trust. The north kerb faces the entry room, the south cheek
+  faces the well; the other two faces come out of `roomWallPanels` with the right direction.
+- **The door's own reveal**, a casing in HouseScene: `y1` is the carve's top rather than the leaf's, because the
+  leaf is a 2.15 m door standing in a 2.03 m opening, and `sill: false` because the opening's floor is the stair's
+  own top tread.
+
+### The regression found on the way
+
+`fit: { width: 1.229 }` on the hidden-door row widened `armHiddenDoor`'s collider into two 6.8 m bars lying across
+the flat, because that collider is taken from the placed model's own box rather than from the leaf's nominal size.
+Reverted; the leaf's 1.01 m in a 1.24 m carve is what the new jambs close instead.
+
+### Verified
+
+`npx tsc --noEmit` clean. 215 colliders, the 6.8 m bars gone. Walks, with the kerbs where they should be:
+
+```
+flat, south onto the well kerb    BLOCKED from (17.00, 4.1, 0.70)   <- the north cheek
+flat, east onto the west kerb     BLOCKED from (15.16, 4.1, -1.50)  <- the west kerb
+store, north onto the south kerb  BLOCKED from (16.60, 4.1, -2.46)  <- the south kerb
+west strip, south into the store  BLOCKED from (15.00, 4.1, -0.57)  <- the flat's own south wall, not a kerb
+```
+
+and the three boxes refusing them are the new ones, with the extents the design asks for
+(`x 15.5..15.7 y 2.39..2.85 z -2.03..0.26` west, `x 15.6..18.71 y 2.39..2.85 z -2.13..-1.93` south,
+`x 15.5..18.71 y 0.2..2.85 z 0.16..0.36` north).
+
+**No quicksand.** `tools/_hidstuck.mjs` sweeps 10 879 standing poses over the entry room, the strip behind it,
+the hidden stair, the hidden room and the rear wing, and asks each one whether it is intersecting *and* cannot
+get out with a half-metre move in any of eight directions: 376 flagged, every one of them inside a wall's own
+footprint (the x 14.55 / 15.55 columns, the z -1.05 band under the flat's south wall) and therefore not a pose
+anyone can walk into. 3 428 poses are pressed against something and can step out, which is normal. Nothing in the
+open floor.
+
+**No sightline from the flat.** `tools/_hidsee.mjs` raycasts with the game's own `__daayan.look()` from 34 legal
+eye positions (a 0.5 m grid over both halves of the upper storey, each pose filtered by the controller's own two
+predicates and by 0.6 m of clear air) at 126 points inside the room: **4 284 rays, 0 reaching the room**. The
+positive control is the same file with `POSES=inside` — eyes standing in the room itself report 430 leaks from 22
+positions, so the probe can see. Two versions of it were wrong before this one: `look()` casts from half a metre
+in front of the eye, which skips the very kerb an eye pressed against it is being blocked by, and the pitch it
+computed by hand was only right at yaw 0 and 180. Both are gone — the camera is aimed with `lookAt`.
+
+Both facing rows are in the scene, on the same scan model every other facing uses:
+`up-hidden-kerb-north-0` at (17.11, 0.37) and `up-hidden-shaft-south-0` at (17.41, -1.29).
+
+### Still open
+
+- Standing *pressed against the north kerb* and looking 45-60 degrees down the shaft still shows the room's own
+  west wall about 2 m below: that is the shaft's west end, where the flight lands, and it cannot be closed without
+  closing the stair. From two or three metres away the kerb screens exactly the band that would see into the room,
+  so a player walking past sees the shaft and the flight and not the room — which is the report.
+- `Screenshot (257).png` still has not been read (the reader's size cap). If the blue annotation on it was about a
+  different side of this shaft, that is the one thing here still unconfirmed.
+
+## 2026-09-20 — Hidden room behind the red-box door, step 4: the kerbs out, the doorway onto the west strip
+
+Three complaints, one screenshot each, the same pose in all of them — `pos(16.84, 4.10, 1.29) yaw 3.11`,
+which is standing in the entry room looking south-west down at the well:
+
+1. "pura wall nahi hai" — the flat's south wall read as broken, with a gap you could see through into
+   the shaft and the wing's boards beyond.
+2. The walls built inside the room had to come out.
+3. The wall over-extended: retract it to the blue-marked rough-wall extent and leave the circled floor
+   on its west side open, because the player is supposed to walk that way into the other room.
+
+They are one fault with three faces, and step 3's own two decisions are it.
+
+### The doorway was over the shaft
+
+`UP_BACK_DOOR` stood at `x: 16.5, half: 0.7` — span **15.8 .. 17.2** — and `HID_STAIR_WELL` is
+**16.21 .. 18.61**. So the wall's only opening sat directly above the stairwell: the "gap" in #1 is
+the doorway, and what showed through it was the well's own column, the top of the flight and the rear
+wing's floor beyond. It also meant the doorway went nowhere — both sides of the opening were the same
+2.4 m drop. Nothing about the wall was thin or unclosed; the hole in it was deliberate and in the one
+place it could not be.
+
+Both halves of that are in the report's own annotation, and `UP_BACK_DOOR`'s comment now records them:
+a rough wall drawn over exactly that opening, and the floor west of it circled. `tools/_overlay.mjs`
+projects the named boxes onto the user's own frames from that stance — `shots/annot-wallmap-1.png` ..
+`-3.png` — and `shots/fix-af3-pose.png` is the same stance rendered after the change, with the wall
+continuous across the frame and boards under it on the west side.
+
+### `HID_ROOM_HOLE` was the floor's lie, and the kerbs were its fence
+
+Step 3's second decision was to cut the room's *whole* footprint out of the collision floor while
+cutting only the stairwell out of the drawn floor — `floorHoles: [HID_STAIR_WELL, HID_ROOM_HOLE]` —
+with the reasoning that a cut wider than the drawn gap can never be seen. It cannot be seen, but it can
+be walked on: `UPPER_PATCH` still draws boards over x 14.4..16.21 and over the strip at
+z -1.93..-0.99, which is 2.2 m of room with nothing under it. That is the west route in #3: it looked
+like floor and was a drop, so the only way to keep it was to fence it, and the four kerbs did that
+fencing. The user's #2 is the fence.
+
+So the two decisions are removed together, and the floor stops being two rectangles:
+
+```ts
+floorHoles: [HID_STAIR_WELL],          // the rectangle the drawn gap already is
+```
+
+and the kerbs that existed only to stand on the difference are gone with it: **west kerb** (the line at
+x 15.6, z 0.16 down to -1.93), **south kerb** (the line at z -2.03, x 15.7 east to 18.61), the **north
+kerb's** 0.61 m over the patch (it began at `HID_ROOM_HOLE.x0`), and the **south cheek's** stop at `UP_Y`.
+What is left of the stairwell's own faces is the well's own two lips, both 16.21 .. 18.61 and both rising
+to `UP_Y + 0.45`. Two runs and not four, because the well's two short ends need nothing: the east one is
+the hidden door's own line at x 18.61, and the west one is where the flight lands — a step down onto the
+room's own floor at 16.21. `UP_HIDDEN_STAIRWELL_PANELS` shrinks to those two, and the `HID_ROOM_HOLE`
+import goes with the constant.
+
+### The door moved to the west strip
+
+`UP_BACK_DOOR` is now `{ x: 15.0, z: -0.99, half: 0.6 }` — span **14.4 .. 15.6**, the flat's own west
+end, which is the strip's own doorway: the flat's west wall is its west jamb, `expandRun` drops the
+zero-width solid piece west of a jamb sitting on the run's own end, and the header closes the top.
+Both sides of it are real floor now (2.40 north, 2.40 south, one continuous `UPPER` rect), so the walk
+is a walk and not a step off the boards.
+
+Opening that wall opened the strip's west side as well, and that had to be closed in the same change:
+the flat's west run used to stop at the -0.99 line, so x 14.4 over z -1.93 .. -0.99 was a way out of the
+building. It starts at `UPPER.z0` now, which is the 0.94 m `UP_STORE`'s own comment records — the strip's
+west wall is that run, and the store's own west wall meets it at -1.93.
+
+### Verified
+
+`npx tsc --noEmit` — **exit 0**, and `npm run build` with it: 73 modules transformed, bundle
+`dist/assets/index-DNLoQv51.js` at 860.23 kB / 240.14 kB gzip. `findstr /s /i /n /c:"kerb" src\*` — two
+hits, both wanted: the note under `floorHoles` recording the four kerbs that came out, and the north lip's
+own facing row id `up-hidden-kerb-north` in ModelProps. No fence run survives, and `HID_ROOM_HOLE` survives
+only in the one comment that says why the rectangle is gone.
+
+The route, queried through `__daayan` rather than walked by hand — `groundYAt` on a grid over the storey the
+doorway opens into. The flat's walkable floor is the `UPPER` rect at y 2.4 and the rear wing's three rooms
+are at the same 2.4, so a reading other than 2.4 on the western columns is a hole rather than a floor:
+
+```
+x 15.0 : 0.6=2.40  0.2=2.40  -0.2=2.40  -0.6=2.40  -1.0=2.40  -1.4=2.40  -1.8=2.40  -2.2=2.40  -2.6=2.40
+x 15.4 : 0.6=2.40  0.2=2.40  -0.2=2.40  -0.6=2.40  -1.0=2.40  -1.4=2.40  -1.8=2.40  -2.2=2.40  -2.6=2.40
+x 15.9 : 0.6=2.40  0.2=2.40  -0.2=2.40  -0.6=2.40  -1.0=2.40  -1.4=2.40  -1.8=2.40  -2.2=2.40  -2.6=2.40
+x 16.5 : 0.6=2.40  0.2=2.40  -0.2=0.20  -0.6=0.20  -1.0=0.20  -1.4=2.40  -1.8=2.40  -2.2=2.40  -2.6=2.40
+x 17.5 : 0.6=2.40  0.2=2.40  -0.2=1.30  -0.6=1.30  -1.0=1.30  -1.4=2.40  -1.8=2.40  -2.2=2.40  -2.6=2.40
+x 18.3 : 0.6=2.40  0.2=2.40  -0.2=1.85  -0.6=1.85  -1.0=1.85  -1.4=2.40  -1.8=2.40  -2.2=2.40  -2.6=2.40
+```
+
+Three bands. **15.0 / 15.4 / 15.9** is the new route: one unbroken 2.40 from the entry room, through the
+moved doorway, down the strip and into the store — the column the user circled, which on the old geometry
+ended at the flat's own south wall. **0.20 / 1.30 / 1.85** are the flight's own treads inside the well, and
+they are the code's arithmetic rather than a reading to take on trust: tread `i` tops out at
+`UP_Y - 0.275 * (i + 1)` over `x 18.61 - 0.3 * (i + 1) .. 18.61 - 0.3 * i`
+(`HID_STEP_RISE = (2.4 - 0.2) / 8`, `HID_STEP_RUN = 0.3`), so x 16.5 is tread 8 at 0.20, 17.5 tread 4 at
+1.30 and 18.3 tread 2 at 1.85. **2.40 at z -1.4 .. -2.6** on all three eastern columns is the strip and
+then the store, and the strip is the one that matters: under step 3 it read 0.20 — the hidden room's own
+floor, 2.2 m below the boards drawn over it — because that is exactly the rectangle `HID_ROOM_HOLE` had
+taken out.
+
+Colliders, `tools/_hidhit.mjs`, against the band the controller moves in (2.40 .. 4.10):
+
+```
+(15.0, 4.1, -0.6)   no box in band    <- through the doorway
+(15.0, 4.1, -1.5)   no box in band    <- the strip
+(15.0, 4.1, -2.4)   no box in band    <- inside the store
+(16.5, 4.1, -1.6)   x 16.11..18.71  y 0.20..2.85  z -1.28..-1.08   <- the well's south lip
+```
+
+The doorway's column owns one run box and it is the header — x 14.4 .. 15.6, y 4.50 .. 5.29, i.e.
+`UP_BACK_DOOR.top` (UP_Y + 2.1) up to the wall's own `height` of 2.89 — which is above the band. The one
+box east of the corridor is the south lip, and its extents are the declared run rather than a judgement:
+`HID_STAIR_WELL.x0 .. x1` padded by HALF_T, rising from the room's 0.2 floor to `UP_Y + 0.45`.
+
+Ray scan from the user's pose (`tools/_hidview.mjs`, the probe step 3 used): every ray in the wall's band
+lands on a wall, and the low rows land on the lips and on `UPPER_PATCH` below the lip line. The band that
+used to be an opening has drawn floor under it and a drawn wall across it, and no ray reaches the room.
+
+One detail worth stating because it is what makes both jambs land on boards rather than on the edge of one:
+the 1.2 m clear span is entirely inside `UPPER_PATCH`'s first rect, which floors x 14.4 .. 16.21 from
+z 3.72 down to -1.93 — the west jamb is the patch's own west edge and `UPPER.x0`, and the east jamb is
+0.61 m clear of the well.
+
+### Live, on the dev server
+
+`npm run dev` on `:5174`, the page driven over CDP (`tools/act.mjs --begin`, then `tools/lookshot.mjs` at a
+pose). Two frames, both from the report's own side of the wall:
+
+- `shots/live-step4-pose.png` — the user's own stance, `pos(16.84, 4.10, 1.29) yaw(3.11)`. The wall is solid
+  plaster across the whole frame at x 16.84, which is the middle of where the old 15.8 .. 17.2 opening was.
+  No gap, no shaft, no room below.
+- `shots/live-step4-doorway.png` — standing in the entry room at (15.0, 4.10, 1.20) facing south: the doorway
+  is there, and through it the strip and the store's own doorway at the far end.
+
+And the same stance asked with the game's own ray rather than read off pixels:
+
+```
+(15.00, 4.10, 1.20) facing south   ->  up-store-wall-1-0   at(15.00, 3.35, -6.24)   d=6.98
+```
+
+6.98 m landing on a wall at z -6.24 is the store's far side, so the line from the entry room crosses the
+doorway, the strip and the store without meeting anything — the walk the user circled. On the old geometry
+that ray stopped on the flat's own south wall at 2.2 m.
+
+### Still open
+
+- The two lips that remain are plaster ridges 0.45 m over the storey's floor on the well's own north and
+  south edges (2.85, above the controller's 0.35 m step-up, so their tops are never a walkable surface).
+  They are the well's edge and not a wall across a room — without them both the entry room and the strip
+  have an unfenced 2.4 m shaft along their edge — so they stayed. If "andar jo walls daali hain" meant these
+  too, the answer is not to delete them but to change what they are: a 0.15 m board or an iron trim at the
+  floor line is the same barrier in the same place and reads as trim. Not done, because it is a look question
+  and the user has the screenshot.
+- `Screenshot (257).png` still has not been read (the reader's size cap).
+
+## 2026-09-20 (later) — the probe browser was eating eleven cores
+
+Not a game bug: the user's own machine, and the report was "ye process apne aap bahut jada CPU use kar rha
+hai, end task karta hu toh thodi der baad apne aap start ho jata hai" with the task manager's `--type=gpu-process`
+row in the screenshot. It was ours — the headless Chrome every live probe drives, still up from a session hours
+earlier.
+
+### What it was doing, measured
+
+`Get-Process`.CPU over a four-second window, on the twelve-core box:
+
+```
+chrome.exe --type=gpu-process --headless=new --use-angle=swiftshader ... --user-data-dir=D:\daayan - main\.chromeprof-live
+  12518 s of CPU time accumulated, and 1089% of one core while sitting on the title menu
+```
+
+Eleven of twelve cores, on a page nobody was touching. Three things multiply: headless has no display, so there
+is no vsync to pace a frame against; `--use-angle=swiftshader` draws every frame on the CPU because the box's
+GPU is not reachable from the headless path; and a game loop that asks for another frame in the frame it just
+finished gets it immediately. So `requestAnimationFrame` is called as fast as a software rasterizer can finish a
+1024x576 frame of the house, forever, whether or not anything is being measured. The menu is not cheaper than
+gameplay — the scene behind it is drawn either way.
+
+### Why ending the task did not stop it
+
+Chrome's browser process supervises its own children. Ending the `gpu-process` row takes that process out and the
+parent starts a replacement a second later, at the same load, which is exactly the "thodi der baad apne aap start
+ho jata hai" the report described. Nothing in this repo relaunches it; the supervisor is inside Chrome itself.
+The kill has to land on the browser process — the row without `--type=` — or better, be asked for over the
+protocol, which is what `close` in the same tool already did. Task manager on a Chrome tree is the wrong tool
+twice over: the child comes back, and `taskkill /IM chrome.exe` would take the user's own browser with it.
+
+### The fix: pause, resume, stop
+
+`tools/_cdplive.mjs` grew two modes and a third was widened:
+
+- `pause` — `Page.setWebLifecycleState` to `frozen` on the page itself. Measured: every process of the browser
+  drops below 1% of a core, and stays there. The frame loop and every timer stop; the page and its state do not.
+  `Runtime.evaluate` still answers while frozen (`document.title` came back), so a probe that only needs to set a
+  position and cast a ray can run against a frozen page.
+- `resume` — back to `active`. Verified that the sim survives the round trip: `__daayan` keeps its handles, the
+  player is where it was, and the frame loop picks up again. Probes that need the game to tick need this first.
+- `stop` — `close` plus the dev server. `dev` now writes the vite pid to `.vite-live.pid`, which is the only way
+  to stop it without a WMI round-trip to tell one `node.exe` from another; when the file is missing (a server
+  somebody else started) it prints the one-liner instead of guessing.
+
+`.gitignore` learned `.chromeprof*/`, `.vite-live.pid` and `.tmp-*`. The profiles alone were 1.6 GB across nine
+directories by then, all of them throwaway.
+
+### The standing rule
+
+`pause` when stepping away mid-session, `resume` before the next probe, `stop` when the session is over. A live
+page costs eleven cores here, so leaving one up is the same as running a stress test in the background.
+
+## 2026-09-20 (night) — Hidden stairwell, step 5: the well's west head, and the sightline along it
+
+The report's own stance, from the storey: `pos(14.91, 4.10, 0.46) yaw(1.67)`, the frame being
+`shots/live-step5-pose.png`. Standing on the hidden storey 1.3 m west of the well's west lip, the whole upper
+flight was in the picture and the room below it behind the treads. Measured with the game's own ray
+(`tools/_wellsight.mjs` — twelve sample surfaces inside the well: every tread, the room's floor at both ends,
+both long walls' inner faces) **6 of the 12 were visible**: the five upper treads, and the flight also stopped
+the ray aimed at the room's floor.
+
+### The three sides, and the one the parapet cannot cover
+
+The storey's floor has `HID_STAIR_WELL` (x 16.21..18.61, z -1.08..0.16) cut out of it, and the flight descends
+westward inside that rectangle from the storey's floor line down to the room's own 0.2. Two runs already closed
+the well's long sides — the parapet on its north lip and the cheek on its south, both based at the room's floor
+and 0.45 high. Neither can cover the *west* end, and the parapet specifically cannot: the sightline to the top
+treads crosses the parapet's own line z 0.26 at x 15.34, west of where the parapet starts (16.21). What the view
+went over is the lip itself — the ray crosses x 16.21 at y 3.10, 0.70 m above the storey's floor. The well is
+2.4 m long and the flight runs its whole length, so looking along the well from its west end is looking up the
+flight: the treads stack up on screen with nothing behind them but the room below.
+
+### The head: one run drawn, one run to walk into
+
+Two new entries close the west lip from the storey's floor line (`UP_Y` 2.4) to eye height (`UP_Y + 1.7` = 4.1),
+on the same z ends as the two runs beside them (`z0 - HALF_T` to `z1 + HALF_T`), so the three meet at their
+corners. 1.7 of height is not a round number chosen to look like a wall: it is the only height that holds from
+*every* stance. Hiding a top tread from a given eye is solvable — 1.10 m of wall at 1.3 m back, 1.48 m pressed
+against it — but the closer the player stands the taller the wall has to be, and at eye height that curve closes:
+a ray that clears a top at eye level is level or rising where it crosses, and a straight ray that is level or
+rising there never comes back down to a well lying entirely below the storey's floor.
+
+The drawn run is `drawOnly` down to the floor line, where nothing can be seen through it, and the collider is its
+`collideOnly` twin based at `UP_Y + 0.8` = 3.2. Both ends of that window are tested: above 3.075 so that no pose
+the descent passes under is refused by the moving test (which inflates the capsule by its radius both ways), and
+below the crouched eye the storey can put at this lip (2.4 + 1.1 = 3.5), because a collider based higher would
+let a crouched player walk out over the well — the one thing the parapet's own 0.45 is there to prevent.
+
+### Verified
+
+Everything below is live, on the dev server (`npm run dev`, `:5174`), the page driven over CDP.
+
+`tools/_wellsight.mjs`, the twelve sample surfaces, after the head was built:
+
+```
+landing 1.3 m W of lip (14.91, 4.10,  0.46)  ->  0/12 visible
+5 m west             (13.61, 4.10,  0.46)  ->  0/12 visible
+landing, south side  (14.91, 4.10, -0.46)  ->  0/12 visible
+on the flight        (17.40, 2.75, -0.46)  ->  12/12
+```
+
+The 12/12 is a walker standing *on* the flight looking at the treads under them — the well is allowed to be
+visible from inside itself. The three rows that matter are the stances a player can hold on the storey, and all
+three are 0.
+
+`tools/_wellwalk.mjs` names the one box that crosses the head's own plane, and every gait against it:
+
+```
+colliders crossing the head's own plane (x 16.21, well centre):
+    [minX 16.11, maxX 16.31]  y 3.2..4.1  z -1.28..0.36
+
+down the flight, west              -> x 16.07  feet 0.2   (the room's floor, reached)
+down the flight, west, running     -> x 16.10  feet 0.2
+down the flight, west, crouched    -> x 16.07  feet 0.2
+the landing, east into the head    -> x 15.74  feet 2.4   (stopped)
+the landing, east, crouched        -> x 15.74  feet 2.4   (stopped)
+the landing, east, running         -> x 15.70  feet 2.4   (stopped)
+```
+
+15.74 is the collider's 16.11 minus the 0.35 m capsule radius: the storey walker is held at the face, at all
+three gaits and crouched. And the descent rows are *identical* to the run taken before the head existed — the
+whole `_wellwalk.mjs` output was diffed between the pre-head run and the final one, content-identical, so the
+head changed nothing about walking the flight. That is the point of splitting the two runs: the drawn face and
+the collider window are different rectangles on purpose.
+
+`tools/_wellface.mjs`, level rays from x 15.2 (0.91 m of clearance, pitch 0, so no aim to get wrong), scan across
+the face at eye height: hits on `up-hidden-walls` at 16.11 from z 0.20 to 0.34, then the imported model beyond —
+the run ends at 0.36, so 0.34 is the last hit inside it, 0.36 grazes the corner, and 0.38 on lands on the model.
+No shortfall to make up. Vertical scan at the well's centre puts the drawn face at x 16.11 from y 2.5 to 4.0, so
+it does reach the storey's floor line and the storey's own eye height.
+
+`npx tsc --noEmit` exit 0. Frames: `shots/live-step5-landing.png` (the model's own stance, above) and
+`shots/live-step5-pressed.png`, plus a true before/after pair at one aim — `shots/live-step5-pressed-before.png`
+(22:17, old geometry) and `shots/live-step5-pressed.png` (23:12, with the head).
+
+### The probe artifact that almost bought a longer wall
+
+The head's north end was first run out to `z1 + 2 * HALF_T`, on the strength of a reading taken from the *pressed*
+stance (15.76, 4.10, 0.46): it said the drawn edge stopped at z 0.31 and a ray crossing 0.03 m north of it
+slipped through to the flight. It was an artifact, not a gap. `handles.look()` fires its ray from
+`camera.position + 0.5 * dir` — the offset that clears the lantern, the arm and the fist, which are children of
+the camera — so from a stance 0.35 m from this face the ray *starts* 0.15 m past it, and what those rows hit was
+the geometry behind the wall. Nothing within 0.5 m of a surface can be tested with that ray at all. The run was
+cut back to `z1 + HALF_T`, where `segmentBox` pads it to 0.36 — the face of the flat's south wall. North of that
+the slot between the head's end (0.36) and the room's north wall (0.51) is over the storey's floor slab, not over
+the well (the hole is z -1.08..0.16), so a ray crossing the plane above 0.36 has solid floor beneath it and
+cannot come down the shaft. `tools/_wellsight.mjs` and `tools/_wellcorner.mjs` now name that blind spot, and warn
+when the eye is inside the 0.5 m offset, instead of reporting what the ray found behind the wall as a sighting.
+
+### Still open
+
+- The two lips step 4 left in place are unchanged, and the head now closes the third side of the same enclosure,
+  so the well is walled on all four of its edges. The head is a plain 1.7 m plaster panel at the lip; if it
+  wants to read as something else — a door-height frame, boards, iron — that is a look call and the geometry
+  does not care, the guarantee being height and not material.
+- `Screenshot (257).png` still has not been read (the reader's size cap).
 

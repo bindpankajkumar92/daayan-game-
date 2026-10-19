@@ -112,14 +112,6 @@ const STUCK_WINDOW = 1.0;
 const STUCK_MIN_RATE = 0.25;
 
 /**
- * Earshot floor for a maximum-loudness noise, in metres.
- *
- * Larger than the house's diagonal (~35 m), so a full noise bar is heard wherever the player is. See
- * the `noise:alert` handler for why this is not simply `hearingRange`.
- */
-const HOUSE_SPANNING_HEARING_RANGE = 60;
-
-/**
  * Longest interval a single far-tier tick may integrate, in seconds.
  *
  * A backstop on top of the per-frame dt clamp: 0.5 s is the far tier's own period at `aiFarHz: 2`, so
@@ -169,6 +161,15 @@ export class DaayanAI {
    * around the house until she woke.
    */
   private stashedAlert: Vec3 | null = null;
+  /**
+   * A maxed noise bar awaiting delivery, with the exact position it fired at.
+   *
+   * Deliberately bypasses the hearing model: a full bar is the loudest thing the player can do,
+   * and "she did not hear you because falloff + walls ate it" is the bug. Consumed every tick in
+   * `buildContext` (not on the throttled perception rate) so she reacts on the next tick, wherever
+   * she is. Latest position wins.
+   */
+  private pendingAlert: Vec3 | null = null;
   /** The last intercept point she planned, for the overlay's "prediction target" readout (§26). */
   private actionPrediction: Vec3 | null = null;
   /** Edge detector for the attack, so `game:caught` fires once per catch and not once per frame. */
@@ -361,24 +362,19 @@ export class DaayanAI {
   }
 
   /**
-   * Route a maxed noise bar through the hearing model and into the sound queue.
+   * Deliver a maxed noise bar as a guaranteed loud sound at the exact position.
    *
-   * Delivered as a loud, accurately-located sound. The hearing model still runs, so the wall
-   * damping and jitter apply and she is never given the player's exact position.
-   *
-   * But it is not gated on `hearingRange`: a noise bar at maximum is the loudest thing the player
-   * can do, and "she did not hear you because you were 35 m away in a small house" is not a
-   * defensible outcome — it is the bug being fixed. So the perceive call gets a range floor that
-   * covers the whole house, and the falloff still applies within it.
+   * Bypasses the hearing model on purpose: falloff + wall damping could shrink a house-spanning
+   * max to below `hearingThreshold` (far + walls = null) or below `hearingLoudThreshold`
+   * (medium instead of loud), which is exactly "bar full but she patrols". A full bar is the
+   * loudest thing the player can do — she knows where it maxed, wherever she is, and comes to
+   * search it. Queued in `pendingAlert` and consumed every tick in `buildContext`, not on the
+   * throttled perception rate.
    */
   private deliverNoiseAlert(pos: Vec3): void {
-    const heard = this.hearing.perceive(
-      { position: pos, loudness: 1, kind: 'special', time: this.now },
-      this.loco.eye(),
-      Math.max(this.cfg.hearingRange, HOUSE_SPANNING_HEARING_RANGE),
-    );
-    if (heard) this.pendingSounds.push(heard);
-    this.currentSound = heard ?? this.currentSound;
+    // Copy: the bus hands around the player's live position vector, and keeping the reference
+    // would make the target follow the player until consumed.
+    this.pendingAlert = v(pos.x, pos.y, pos.z);
   }
 
   /** Wake her up. The trigger is the caller's business; the AI just starts behaving. */
@@ -438,6 +434,7 @@ export class DaayanAI {
     this.mediumSound = null;
     this.currentSound = null;
     this.stashedAlert = null;
+    this.pendingAlert = null;
 
     this.rememberedVelocity = null;
     this.prevVelocity = null;
@@ -755,6 +752,23 @@ export class DaayanAI {
     c.visionConfidence = this.vision.getConfidence();
     c.visibility = this.vision.getLastResult().visibility;
     c.playerVisible = this.vision.isConfident(this.fsm.current === 'CHASE' || this.fsm.current === 'INTERCEPT');
+
+    // A maxed noise bar is guaranteed evidence: exact position, every tick, anywhere.
+    // Latest wins; written to memory so INVESTIGATE/SEARCH navigate to it even after the tick.
+    if (this.pendingAlert) {
+      const at = this.pendingAlert;
+      this.pendingAlert = null;
+      this.loudSound = { position: at, loudness: 1 };
+      this.memory.noteHeard(at, this.now, 1.0);
+      this.currentSound = {
+        position: at,
+        source: at,
+        baseLoudness: 1,
+        perceivedLoudness: 1,
+        kind: 'special',
+        time: this.now,
+      };
+    }
 
     this.memory.decay(0, this.now);
     c.memoryPosition = this.memory.getPosition();

@@ -253,14 +253,28 @@ export const UP_SHRINE = { x0: UPPER.x0, x1: UPPER.x1, z0: -11.0, z1: -6.4 };
 const UP_BACK_H = 2.7;
 
 /**
- * The cut in the flat's south wall, and the two doorways beyond it.
+ * The doorway from the entry room into the rear wing — and the reason it sits at the west end rather
+ * than in the middle of its wall.
  *
- * 16.5 keeps 1.4 m of wall standing at each jamb, comfortably over WALL_MIN_RUN's 0.7 — under that the
- * collider slice is dropped and a wall that is still drawn stops stopping anybody. Every header here is
- * 2.1 above the floor, as everywhere else in the house except the two doors that stand where a stair's
- * step-up fires.
+ * It was at x 16.5, which put its clear span at 15.8 .. 17.2, straight across the stairwell (x 16.21 ..
+ * 18.61). Two things were wrong with that, and both were reported before they were understood. A metre
+ * of the doorway had no floor under it, so walking south through it dropped the player onto the flight;
+ * and the wall's only opening stood over the very thing the wall is there to hide, so from the entry
+ * room the doorway was a hole you looked through into the room below — which is the "pura wall nahi
+ * hai". The user drew a rough wall over exactly that opening, and circled the floor west of it.
+ *
+ * At 15.0 the opening is 14.4 .. 15.6: the flat's own west end, where this wall meets `UPPER.x0`. That
+ * span is real floor on both sides of the wall — `UPPER_PATCH`'s first rect floors x 14.4 .. 16.21 from
+ * z 3.72 down to -1.93, and it is outside every hole in the collision table — so the chain stair →
+ * door.glb → entry room → strip → rear wing is walkable end to end. The wall then runs solid from 15.6
+ * east to 18.61, covering the well, which is the whole point of it.
+ *
+ * The west jamb is the flat's own west wall, so no piece of wall is left standing beside the opening:
+ * `expandRun` drops the zero-width slice at the run's end and keeps the header over the doorway, which
+ * is what stops the opening reading as a gap cut out of a wall. Every header here is 2.1 above the
+ * floor, as everywhere else in the house except the two doors that stand where a stair's step-up fires.
  */
-export const UP_BACK_DOOR = { x: 16.5, z: -0.99, half: 0.7, top: UP_Y + 2.1 };
+export const UP_BACK_DOOR = { x: 15.0, z: -0.99, half: 0.6, top: UP_Y + 2.1 };
 export const UP_CHILD_DOOR = { x: UP_STORE.x1, z: -4.0, half: 0.7, top: UP_Y + 2.1 };
 export const UP_SHRINE_DOOR = { x: 16.5, z: UP_STORE.z0, half: 0.7, top: UP_Y + 2.1 };
 
@@ -310,7 +324,54 @@ export const UP_HIDDEN_CUT = {
  * hid the mother's body behind the one door that woman could not open. Furthest from the ritual is the
  * whole point.
  */
-export const UP_HIDDEN = { x0: 15.6, x1: 21.6, z0: -6.2, z1: 0.4 };
+/**
+ * The hidden room's wall lines — the rectangle the four walls stand on.
+ *
+ * This is *not* the walkable floor; see `UP_HIDDEN_FLOOR` for that, and for why the two had to be
+ * separated. Walls are thickened by WALL_T (0.2) about these lines, so the room's interior runs from
+ * `x0 + 0.1` to `x1 - 0.1` and `z0 + 0.1` to `z1 - 0.1`.
+ *
+ * `z1` is 0.61 rather than a line flush with the entry room's own north wall at 0.49, and the
+ * difference is the player's collider rather than aesthetics. The stairwell's northernmost walkable
+ * line is the doorway's own edge, `UP_HIDDEN_DOOR.z + UP_HIDDEN_DOOR.half` = 0.16, which cannot move
+ * because it *is* the width of the door. A 0.35 m cylinder standing on that line reaches z = 0.51.
+ * So the north wall's inner face has to be at or beyond 0.51, which puts its centre-line at 0.61 and
+ * its outer face at 0.71 — 0.12 m north of the entry room's wall. That 0.12 m is invisible: it sits
+ * inside the wall thickness, above this room's ceiling, and the ceiling is level with the upper
+ * storey's floor at 2.4 either way.
+ *
+ * At the original 0.4 the inner face was 0.30, well inside the player's reach from the doorway line,
+ * which is what let them end up standing *inside* the wall and unable to leave — the reported trap.
+ */
+export const UP_HIDDEN = { x0: 15.6, x1: 21.6, z0: -6.2, z1: 0.61 };
+
+/**
+ * The room's interior floor, inset from the wall lines by half a wall thickness.
+ *
+ * Kept separate from `UP_HIDDEN` because `UP_HIDDEN` also places the walls, and a floor must never
+ * extend under a wall. `groundYAt` reports the highest *walkable* surface under a point and knows
+ * nothing about walls, so any floor rect reaching under one advertises "you may stand here" for a
+ * strip that is solid. The player walks in, arrives already intersecting the wall box, and then
+ * cannot leave in ANY direction — there is no approach to have stopped them and no face to slide
+ * along, so every horizontal move is refused while the ground query keeps returning a floor. They
+ * neither move nor fall. That is the trap, and the report of it was "jaise daldal" — like quicksand.
+ *
+ * Inset on all four sides, not just the north one. The first pass at this fixed the north wall only
+ * and a sweep of the room still found sixteen trapped poses, all of them hugging the west wall at
+ * x = 15.7 — the floor's `x0` was 15.6, the wall occupied 15.5..15.7, and the 0.1 m overlap was
+ * enough to seat a 0.35 m cylinder inside it. A bug of this shape is a property of the floor rect
+ * versus every wall, not of one wall, so it is fixed once for all of them: the floor is the wall
+ * centre-line rectangle shrunk by HALF_T.
+ *
+ * Everything else about the room reads `UP_HIDDEN` — the walls themselves, the ceiling's extent, the
+ * stairwell's own hole. Only the walkable floor uses this.
+ */
+export const UP_HIDDEN_FLOOR = {
+  x0: UP_HIDDEN.x0 + HALF_T,
+  x1: UP_HIDDEN.x1 - HALF_T,
+  z0: UP_HIDDEN.z0 + HALF_T,
+  z1: UP_HIDDEN.z1 - HALF_T,
+};
 
 /** Floor height of the hidden room. Below the upper storey and above nothing. */
 export const UP_HIDDEN_Y = 0.2;
@@ -327,7 +388,7 @@ export const UP_HIDDEN_H = 2.2;
 const HID_STEP_COUNT = 8;
 /** 2.2 m over eight steps. Under the step-up, so the climb back is walkable rather than a ladder. */
 const HID_STEP_RISE = (UP_Y - UP_HIDDEN_Y) / HID_STEP_COUNT;
-const HID_STEP_RUN = 0.3;
+const HID_STEP_RUN = 0.22;
 
 /**
  * The stairwell's footprint in the upper floor, and the hole that has to be left for it.
@@ -340,23 +401,72 @@ const HID_STEP_RUN = 0.3;
  * z is the doorway's own span, so the hole is exactly the width of the door and reads as a threshold
  * rather than as a hole in a room. x runs west from the doorway for the stair's full 2.4 m of travel.
  */
+/** West end of the flight itself: the bottom tread's far edge. The well starts further west, see below. */
+export const HID_FLIGHT_X0 = UP_HIDDEN_DOOR.x - HID_STEP_RUN * HID_STEP_COUNT;
+
+/**
+ * Extra opening past the foot of the flight, so the west head wall stands back from the descent.
+ *
+ * With the well ending at the flight's own foot, the head wall's lower edge (the storey's slab, 2.4)
+ * sat right over the bottom tread. A player on the third tread from the bottom has the eye at 2.45,
+ * so the wall came at them at head height half a metre ahead — reported as the head hitting it.
+ * 0.6 m back, the eye is under 2.2 before the wall is within reach, and the strip it opens is the
+ * room below's own floor at 0.2, under its own 2.2 m ceiling line.
+ */
+const HID_HEADROOM = 0.6;
+
 export const HID_STAIR_WELL = {
-  x0: UP_HIDDEN_DOOR.x - HID_STEP_RUN * HID_STEP_COUNT,
+  x0: HID_FLIGHT_X0 - HID_HEADROOM,
   x1: UP_HIDDEN_DOOR.x,
   z0: UP_HIDDEN_DOOR.z - UP_HIDDEN_DOOR.half,
   z1: UP_HIDDEN_DOOR.z + UP_HIDDEN_DOOR.half,
 };
 
-/** The hidden stair as walkable rectangles, descending west from the doorway. */
+/**
+ * There used to be a second rectangle here — `HID_ROOM_HOLE`, the room's whole ceiling footprint —
+ * listed alongside the well in the `upper` room's `floorHoles`, on the reasoning that the walkable
+ * floor table and the visible floor could be decoupled: cut the collision wider than the drawn gap and
+ * nothing is seen, because nothing is drawn for it.
+ *
+ * That reasoning is what broke the rear wing. `UPPER_PATCH` draws boards over x 14.4 .. 16.21 and over
+ * the strip at z -1.93 .. -0.99 — the strip being the way in to `UP_STORE` and its neighbours — while
+ * this second cut had removed the collision surface underneath them. The boards were a painted floor
+ * over a 2.2 m drop, and the route into the wing fell through it. See the note on `floorHoles`.
+ */
+
+/**
+ * The hidden stair as walkable rectangles, descending west from the doorway.
+ *
+ * Straight, not an L. An L was tried and removed: the turn bought nothing, because the visibility problem
+ * is not the stair's shape but the *hole's* shape — and the hole is `HID_STAIR_WELL`, the only one the
+ * storey has. Cutting it wider is what used to hide the room from above and what broke the way into the
+ * rear wing; see the note on the `upper` room's `floorHoles`.
+ *
+ * Treads are rectangles and nothing else, exactly as both other stairs in the house are: the controller
+ * snaps to the highest surface under the player's feet, so a run of rects is a staircase without a single
+ * triangle of geometry, and a rise under the 0.35 m step-up means walking back up works too. `wood_stair.glb`
+ * is placed to match these rects (see its ModelProps row) — the rects are what the player collides with, the
+ * model is what they look at.
+ */
 export function hiddenStairFloors(): FloorRect[] {
   const out: FloorRect[] = [];
   for (let i = 0; i < HID_STEP_COUNT; i++) {
+    // The last tread (i = 7) lands at exactly UP_HIDDEN_Y, the room's own floor height. That is not
+    // a duplicate to be pruned — it is the bottom tread, and `groundYAt` returning the highest
+    // surface makes it and the room floor interchangeable at the same height. Leaving it is correct:
+    // the tread's footprint is the stair's own 1.24 m column, the room floor is the whole room, and
+    // the two agreeing at 0.2 is what makes the descent land flush instead of ending on a step.
+    //
+    // Do NOT be tempted to "fix" the 0.475 reading at x = 16.8 by pruning treads. That is tread 6,
+    // the second-to-last step, and 0.475 is the correct height for it: 2.4 - 0.275 * 7. It reads as
+    // an island in a `groundYAt` table only because the table's x samples straddle the 0.3 m tread
+    // run. A stair has steps in it; a step is not a bug.
     const x1 = UP_HIDDEN_DOOR.x - HID_STEP_RUN * i;
     out.push({
       x0: x1 - HID_STEP_RUN,
       x1,
-      z0: HID_STAIR_WELL.z0,
-      z1: HID_STAIR_WELL.z1,
+      z0: UP_HIDDEN_DOOR.z - UP_HIDDEN_DOOR.half,
+      z1: UP_HIDDEN_DOOR.z + UP_HIDDEN_DOOR.half,
       y: UP_Y - HID_STEP_RISE * (i + 1),
     });
   }
@@ -376,8 +486,9 @@ export function hiddenStairFloors(): FloorRect[] {
  * black on entry — the lantern is a point light with nothing under it to land on — and it is the same
  * defect as the sealed partition above, seen from the other side.
  *
- * The ceiling clears the model's own by 2 cm at 5.32, so the room's y1 of 5.29 does not hide the
- * model's ceiling everywhere instead of filling in the two holes.
+ * The ceiling clears the model's own by 2 cm at 5.32. The upper room's default y1 stays at the
+ * model's 5.29 line, but every procedural run bordering this patch names `UPPER_PATCH.ceilY` as its
+ * top instead, so those missing-shell walls touch this ceiling rather than leaving a 3 cm slot.
  *
  * The floor used to clear it downward the same way, at UP_Y - 0.06, on the premise that the model's slab
  * under these rects sat at 2.35 and a level patch would z-fight it. Both halves of that were wrong, and
@@ -405,17 +516,42 @@ export const UPPER_PATCH = {
   ceilY: UP_Y + 2.92,
   rects: [
     /**
-     * The room the stair's door opens into, in four pieces rather than one.
+     * The room the stair's door opens into, drawn around the stair's opening.
      *
-     * It was a single rect from the model's cutaway edge to the partition doorway. The hidden stair
-     * descends through it, and because this patch *is* that room's floor the opening is made by
-     * omission — the four pieces leave exactly `HID_STAIR_WELL` undrawn. One rect would have needed a
-     * CarveBox against floor that the model never drew in the first place.
+     * It was a single rect from the model's cutaway edge to the partition doorway. The hidden room sits
+     * under this patch, and because this patch *is* the floor, the opening is made by omission — the
+     * pieces below leave exactly `HID_STAIR_WELL` undrawn, which is the same rectangle the walkable
+     * floor is cut by. A CarveBox would have had to cut imported triangles that are not present in the
+     * first place.
+     *
+     * The opening is the doorway's own column and nothing more: x 16.21..18.61 (the stair's 2.4 m of
+     * travel) by z -1.08..0.16 (the door's 1.24 m). That is the whole point of the shape. An earlier
+     * version cut x 15.6..18.61 by z -1.93..0.4 — a 3 m by 2.3 m pit sitting in the middle of the room
+     * the player walks into, plainly visible from the doorway with the door shut. The user's report was
+     * exactly that: "hidden toh lag hi nahi rha, 2nd floor pe aaya toh dikh jayega". The stair is
+     * concealed by its own door now, not by being tucked behind one.
+     *
+     * The four pieces are the patch minus that rectangle; `HID_STAIR_WELL` is the rectangle itself and
+     * is kept as the single source of truth for it, so this list cannot drift from `hiddenStairFloors`.
      */
     { x0: UPPER.x0, x1: HID_STAIR_WELL.x0, z0: UPPER.z0, z1: 3.72 },
     { x0: HID_STAIR_WELL.x1, x1: 19.9, z0: UPPER.z0, z1: 3.72 },
     { x0: HID_STAIR_WELL.x0, x1: HID_STAIR_WELL.x1, z0: HID_STAIR_WELL.z1, z1: 3.72 },
     { x0: HID_STAIR_WELL.x0, x1: HID_STAIR_WELL.x1, z0: UPPER.z0, z1: HID_STAIR_WELL.z0 },
+    /**
+     * The stair's own top step, covered in timber.
+     *
+     * The imported flight's top tread is drawn as bare `Base` geometry — a grey slab sitting at floor
+     * level across the head of the well, with the timber treads only beginning below it. Seen from the
+     * nook that reads as a patch of concrete laid into a wooden floor, which is what was reported:
+     * a grey rectangle at the well's mouth with a wooden floor all round it.
+     *
+     * Drawn here rather than by changing the model because the patch is already the thing that covers
+     * the imported flat's bare geometry, and it is visual only — `houseFloors` does not read this list,
+     * so the walkable treads underneath are untouched and the descent is unchanged. The rect is the
+     * top tread's own footprint, taken from the well rather than restated.
+     */
+    { x0: HID_STAIR_WELL.x1 - HID_STEP_RUN, x1: HID_STAIR_WELL.x1, z0: HID_STAIR_WELL.z0, z1: HID_STAIR_WELL.z1 },
     /** The small south-east room, walled off on its own and only ever seen through its doorway. */
     { x0: 21.05, x1: UPPER.x1, z0: UPPER.z0, z1: 0.55 },
   ],
@@ -851,9 +987,24 @@ export const ROOMS: RoomSpec[] = [
      * both measurably gone. This was only ever the wrong material on the wall.
      */
     tone: 'plaster',
-    // The hidden stair descends through this room's floor. `UPPER_PATCH` cuts the same rectangle out of
-    // the plane it draws; without this line the collision still called it floor and the player walked
-    // over the opening instead of down it.
+    // The hidden room is under this room's floor, and the floor drawn over it is the floor the player
+    // walks on. The two used to disagree, and everything else wrong in this corner came out of that.
+    //
+    // The visible floor is `UPPER_PATCH`: four rects, described there as "the patch minus
+    // HID_STAIR_WELL". The walkable floor is this file's `houseFloors`, which subtracts whatever is
+    // listed here. A second, *larger* rectangle used to be listed — the room's whole ceiling footprint,
+    // x 15.6 .. 18.61 by z -1.93 .. 0.16 — and that made the boards over it a lie: `UPPER_PATCH` drew
+    // boards across the strip that is the way into the rear wing, with no collision surface under them,
+    // so a player taking that route fell through visible floor into the room below.
+    //
+    // Four 0.45 m kerbs were built to fence that lie, and the answer was to remove them: "player vo
+    // dusre room me enter kaise karega" — how is the player supposed to get in. That was the right
+    // call. The fence was treating the symptom; the lie was the disease, and one rectangle is the cure.
+    //
+    // With only the stairwell listed, the walkable floor and the drawn floor are the same rectangle by
+    // construction: the strip is a real passage, and the well is the only hole in the storey. From
+    // inside the room `groundYAt` still finds the room's own floor at 0.2 — the slab overhead is above
+    // the reach of anyone standing under it, so it is never a stepping surface for them.
     floorHoles: [HID_STAIR_WELL],
     walls: [
       // --- The sides the model leaves open. It is a cutaway diorama: measured face by face, its
@@ -863,19 +1014,34 @@ export const ROOMS: RoomSpec[] = [
       // than at the -0.99 line its own south wall stands on, because that south wall is now open — see
       // UP_BACK_DOOR. Without this extra 0.94 m the strip behind the new doorway has no west wall at
       // all and the player steps straight out of the building.
+      //
+      // Both drawn runs rise to UPPER_PATCH.ceilY rather than the room's default 5.29: they are the
+      // walls beside the patch's missing ceiling, and stopping 3 cm short leaves the black/red sliver
+      // across their tops that the user marked. The default remains for the runs against the model's
+      // own 5.29 ceiling, where the imported shell is the surface that should be seen.
       {
         x1: UPPER.x0,
         z1: UPPER.z0,
         x2: UPPER.x0,
         z2: 3.6,
+        y1: UPPER_PATCH.ceilY,
         openings: [{ at: UPPER_DOOR.z, half: UPPER_DOOR.half, y1: UPPER_DOOR.top }],
       },
       // South, west of where the model's own front wall starts — and now the door into the rear wing.
+      //
+      // It stops at the stairwell's west lip. It used to run on to 18.6, which put it straight across
+      // the well 9 cm inside its south edge (the well is z -1.08..0.16), hanging from the slab line
+      // 2.4 upward. Anyone climbing the flight south of its centre line had their capsule (eye + 0.35)
+      // reach that line by the third tread, the vertical test refused the step, and the controller held
+      // their height while they kept walking — feet frozen at 0.475, carried along under the flight and
+      // out the other side. Over the well the storey is already fenced by the well's own south cheek at
+      // z -1.18, so nothing is lost by stopping here.
       {
         x1: UPPER.x0,
         z1: -0.99,
-        x2: 18.6,
+        x2: HID_STAIR_WELL.x0,
         z2: -0.99,
+        y1: UPPER_PATCH.ceilY,
         openings: [{ at: UP_BACK_DOOR.x, half: UP_BACK_DOOR.half, y1: UP_BACK_DOOR.top }],
       },
       // The bathroom's two missing walls. Sealed rather than opened: the model's own partitions
@@ -889,7 +1055,11 @@ export const ROOMS: RoomSpec[] = [
       { x1: UPPER.x0, z1: 3.3, x2: UPPER.x0, z2: 9.4, collideOnly: true },
       { x1: UPPER.x0, z1: UPPER.z1, x2: UPPER.x1, z2: UPPER.z1, collideOnly: true },
       { x1: UPPER.x1, z1: 0.3, x2: UPPER.x1, z2: 9.4, collideOnly: true },
-      { x1: 18.4, z1: -0.99, x2: 21.3, z2: -0.99, collideOnly: true },
+      // Starts at the well's east edge, not 18.4: with segmentBox's end padding 18.4 put the box's west
+      // end at 18.30, over the top two treads, and a climb south of the centre line was held there the
+      // same way the run above used to hold it. `+ HALF_T` lands the padded end exactly on 18.61, still
+      // overlapping the nook's west wall so the corner has no slot.
+      { x1: HID_STAIR_WELL.x1 + HALF_T, z1: -0.99, x2: 21.3, z2: -0.99, collideOnly: true },
       // The nook's west wall, now carrying the hidden door's opening. `collideOnly` still — the model
       // draws the panel, and `openings` on a collideOnly run cuts the collider exactly as it cuts the
       // cross wall below, which is the precedent this follows.
@@ -977,21 +1147,217 @@ export const ROOMS: RoomSpec[] = [
     name: 'Hidden Room',
     floorY: UP_HIDDEN_Y,
     height: UP_HIDDEN_H,
-    floor: UP_HIDDEN,
+    // The interior, not `UP_HIDDEN` — the floor stops at the inner face of the north wall so the
+    // ground query never advertises a surface under it. See `UP_HIDDEN_FLOOR`.
+    floor: UP_HIDDEN_FLOOR,
     /**
-     * No ceiling, deliberately, and this is the one room in the house where that is right.
+     * Its own ceiling, and it has to be its own — the alternative is a lid the player stands on.
      *
-     * It sits directly under the upper storey, so what is over it already *is* that storey's floor: the
-     * rear wing's slab to the south, `UPPER_PATCH`'s patch through the middle, and the model's own
-     * boards over the nook. Drawing a plane here would put two surfaces four millimetres apart and
-     * z-fight them, and it would also cap the stairwell — the patch above already carries the hole the
-     * stair comes down through, and a ceiling here would be a lid over it.
+     * The first attempt omitted this on the reasoning that the upper storey's slab already covers the
+     * room, so a plane here would be a duplicate surface and would cap the stairwell. That reasoning was
+     * only half right, and the wrong half was the expensive one. The slab *did* cover the room, because
+     * only the stairwell had been cut out of it — everything else north of the doorway line was still
+     * solid at 2.4. So the "ceiling" was a walkable floor: the player came down the steps and stood on
+     * it, and from underneath it read as a lid over the room.
+     *
+     * With the slab overhead, the room still needs a top of its own, and for a plainer reason than the
+     * one the first attempt was avoiding: `UPPER_PATCH` is a single plane facing *up*, so from below it
+     * is not a surface at all. Without a ceiling here the room was open to the storey's air and you
+     * looked straight up into the entry room through the boards. It is drawn at `UP_HIDDEN_Y +
+     * UP_HIDDEN_H` = 2.4, exactly level with the storey's own floor, so the two read as one structural
+     * slab rather than as a room with a lid floating in it.
+     *
+     * Note the visible floor above is solid everywhere except `HID_STAIR_WELL`, so from above this
+     * plane is not seen at all through the floor — it is what you see standing on the stair, looking
+     * back up, and what stops the room being open to the sky. The stairwell itself is not capped: the
+     * gap at 2.4 and the room's ceiling at 2.4 are the same line, and the top tread lands flush.
+     *
+     * It covers the room's whole rectangle, north edge included. Over the southern half the rear wing's
+     * own floor lies at the same 2.4 and the two are coplanar — safe here because the wing's floor is
+     * imported boards a few millimetres off 2.400 (see `UPPER_PATCH`'s note on 2.371..2.397), so the two
+     * never share a depth. Drawing it only where the storey's floor is real would leave the room's south
+     * edge open to the wing's floor joists from below.
      */
+    ceiling: true,
+    /**
+     * The stairwell, left open in the ceiling as well as in the floor above it.
+     *
+     * This ceiling sits at 2.4, which is the upper storey's own floor line, and the upper slab has
+     * `HID_STAIR_WELL` cut out of it — so from the entry room the well is a genuine opening you look
+     * down through. The ceiling was a single uncut plane, so from the stair the same well was capped:
+     * open from above, boarded from below, for one opening. Listing the well here makes both views
+     * agree, and it is the same rectangle the floor above is cut by, so the two cannot drift.
+     *
+     * Nothing is lost by opening it: the well is a hole in the floor, so there is no surface above it
+     * that this ceiling was protecting the player from seeing. The room's remaining ceiling still
+     * covers everything else, which is what stops the room reading as open to the sky.
+     */
+    ceilingHoles: [HID_STAIR_WELL],
     walls: [
       { x1: UP_HIDDEN.x0, z1: UP_HIDDEN.z0, x2: UP_HIDDEN.x1, z2: UP_HIDDEN.z0 },
       { x1: UP_HIDDEN.x0, z1: UP_HIDDEN.z0, x2: UP_HIDDEN.x0, z2: UP_HIDDEN.z1 },
       { x1: UP_HIDDEN.x1, z1: UP_HIDDEN.z0, x2: UP_HIDDEN.x1, z2: UP_HIDDEN.z1 },
       { x1: UP_HIDDEN.x0, z1: UP_HIDDEN.z1, x2: UP_HIDDEN.x1, z2: UP_HIDDEN.z1 },
+      /**
+       * The stairwell, walled on all four sides — and fenced on none of the floor around it.
+       *
+       * The report was "stairwell ko chaaro taraf se cover karo": from the entry room the well was an
+       * open shaft — a 2.4 x 1.24 m gap with the room the player had not found yet visible through it
+       * — and from the stair itself there was nothing at all to either hand, so the flight read as
+       * boards floating in a void. The four runs above are the *room's* walls; the well needed its own.
+       *
+       * Two rectangles were cut out of the upper storey's floor when these were built — `HID_STAIR_WELL`
+       * and a larger collision-only one — so the list fenced every edge the two did not share. The
+       * second cut is gone (see the `upper` room's `floorHoles`), which leaves the well as the only hole
+       * in the storey. The east end is the doorway, so it is a threshold rather than an edge; the other
+       * three are runs. The last of the three — the west lip, the head — was found after the other two,
+       * standing on the landing and looking east: see below.
+       *
+       *   HID_STAIR_WELL   x 16.21..18.61, z -1.08..0.16. The floor gap that is *drawn*, and the column
+       *                    the imported flight fills exactly (`hidden-stair.glb` is fitted to it).
+       *   UP_Y             2.4, the storey above. Its floor line is where a rise has to start.
+       *
+       * - **North, the parapet.** The well's north lip at `HID_STAIR_WELL.z1 + HALF_T` = 0.26, rising to
+       *   `UP_Y` + 0.45. The 0.45 is load-bearing: it is over the controller's 0.35 m step-up, so nobody
+       *   walks up onto it, and `groundYAt` reads `FloorRect`s only, so its top is not a surface at all.
+       *   A player is stopped by its side — which is what a parapet is for. It is also what answers the
+       *   original report from the entry room's side: below 2.85 the well is open, and above it the flat's
+       *   south wall carries on to the storey's ceiling, so the only way to see down the well is to stand
+       *   at the lip and look over it.
+       * - **South, the cheek.** The well's south lip at `HID_STAIR_WELL.z0 - HALF_T` = -1.18, the same
+       *   16.21..18.61 and the same height. Downward it is the wall the flight descends against, seen from
+       *   the room; upward it is the 0.45 m cheek on the store's side of the well, which is what stops the
+       *   well's south edge reading as the edge of a stage from the rear wing.
+       *
+       * Both runs take the room's own floor (0.2) as their base rather than `UP_Y`. They are drawn from
+       * inside the room as much as from the storey, and a run starting at 2.4 would leave 0.1 m of bare
+       * floor at its foot, because the skirting pass only reaches runs that touch the room's own floor.
+       * Neither is `modelCollision`, so the shell draws both and the AABBs that stop the player are the
+       * ones the shell draws — the bargain every other room's runs make.
+       */
+      /**
+       * North wall of the stairwell carried to the flat's ceiling.
+       */
+      { x1: HID_STAIR_WELL.x0, z1: HID_STAIR_WELL.z1 + HALF_T, x2: HID_STAIR_WELL.x1, z2: HID_STAIR_WELL.z1 + HALF_T, y1: UPPER_PATCH.ceilY },
+      /**
+       * South wall / cheek of the stairwell:
+       * - From x = 17.07 (HID_STAIR_WELL.x0 + HID_STEP_RUN) to HID_STAIR_WELL.x1 (18.61):
+       *   Full height wall along the south flank to close the open side under the elevated treads (treads 0-6),
+       *   preventing players from walking into the side or underneath of the stairs from the hidden room.
+       * - From x = HID_STAIR_WELL.x0 to 17.07:
+       *   Leaves the ground level (y < 2.4) open so the player can enter/exit Tread 7 (at y = 0.20) into the hidden room,
+       *   while fencing the upper storey (y0 = UP_Y) so players upstairs cannot fall into the well.
+       */
+      // The split is at the bottom tread's east edge (HID_FLIGHT_X0 + run), not the well's west end:
+      // the well now reaches HID_HEADROOM past the flight, and all of that is open floor below.
+      { x1: HID_FLIGHT_X0 + HID_STEP_RUN, z1: HID_STAIR_WELL.z0 - HALF_T, x2: HID_STAIR_WELL.x1, z2: HID_STAIR_WELL.z0 - HALF_T, y1: UPPER_PATCH.ceilY },
+      { x1: HID_STAIR_WELL.x0, z1: HID_STAIR_WELL.z0 - HALF_T, x2: HID_FLIGHT_X0 + HID_STEP_RUN, z2: HID_STAIR_WELL.z0 - HALF_T, y0: UP_Y, y1: UPPER_PATCH.ceilY },
+      /**
+       * **West, the head.** The well's west lip at `HID_STAIR_WELL.x0` = 16.21, closed from the
+       * storey's own floor line up to eye height. The third of the four sides, and the one the two
+       * runs above cannot cover.
+       *
+       * Look north or south at the well and the long runs are between the eye and the flight, which is
+       * what a parapet is for. Look along it from the west and there is nothing between the eye and the
+       * flight at all, because the flight descends *away* from this end: tread 0, the top, is the far end
+       * of the column (18.31..18.61 at 2.125) and tread 7, the bottom, is the near one (16.21..16.51 at
+       * 0.2, level with the room below). So the storey's floor edge was a brow over 2.4 m of open flight,
+       * and from the landing one was looking up the run of it.
+       *
+       * The parapet cannot cover this and neither can the flat's own runs. From the reported stance
+       * (14.91, 4.10, 0.46) — 1.3 m west of the lip, 0.2 m north of the parapet's line — the sightline to
+       * the middle of the top tread, (18.46, 2.15, −0.46), crosses the parapet's own line z = 0.26 at
+       * x = 15.68, which is *west* of where the parapet begins (16.21). What the view goes over is the
+       * lip itself. The rays leaving that stance for the five upper treads cross this wall's plane at
+       * 3.44 m down to 2.54 m — 1.04 m above the storey's floor down to 0.14 m — and every tread below
+       * those is already occluded by the floor slab, which is why the flight showed and the room below
+       * did not.
+       *
+       * Measured before it was built (`tools/_wellsight.mjs 5174 14.91 4.1 0.46 1.67`, which raycasts at
+       * the well's own surfaces rather than at a screen grid): six of the twelve sample surfaces inside
+       * the well were visible — the five upper treads, and the flight likewise stopped the ray aimed at
+       * the room below's floor. After: none, from that stance, from 2.6 m further back (13.61) and from
+       * a stance south of the well (14.91, −1.60). The pressed stance (15.76, 0.35 m from this face) is
+       * *not* among them: it sits inside `look()`'s own 0.5 m ray offset, so no ray can test it — see
+       * the north end below for what that offset did when it was missed.
+       *
+       * 1.7 over the floor, i.e. a top at 4.10, the standing eye height. The arithmetic asks for less:
+       * the binding surface is the top of the flight where it meets the storey's floor line at the far
+       * end (18.61, 2.4), and a ray to it crosses this wall's face at 3.89 from the closest stance the
+       * wall allows, 3.55 from 1.3 m back and 3.25 from 3 m back — 1.49, 1.15 and 0.85 m of wall. But
+       * that answer is arithmetic about `hiddenStairFloors`, and the flight that is drawn is a fitted
+       * model a few centimetres off those rects. Eye height makes the guarantee structural instead, and
+       * free of both the model's fit and the stance: a ray that clears a top at eye level is level or
+       * rising where it crosses, and a straight ray that is level or rising there never comes back down
+       * to a well lying entirely below the storey's floor. It holds for the crouched eye too (1.1, so
+       * 3.5) because that eye is lower still. 0.21 m of extra wall buys all of that, inside an enclosure
+       * nobody can see into.
+       *
+       * Two runs rather than one, and the split is the descent. A walker on the hidden flight passes
+       * *under* this wall, and the moving test inflates their capsule by its radius both ways — 1.7 of
+       * eye and 0.35 of it, so the box a step down is refused by reaches eye + 0.35, and a walker
+       * *falling* a step is a step above the tread under them while they do. Inside this head's own
+       * 0.55 m of reach that puts a running descent's feet at 1.025 at most, i.e. 3.075 at the top of its
+       * capsule. Measured with `tools/_wellwalk.mjs` — which names the box that holds the walker, not just
+       * that it is held: a collider based at `UP_Y + 0.13` held the descent at feet 0.635 from x 16.65 to
+       * 16.07 and the room's own floor was never reached. `collidesAabb`, the horizontal test, skips that
+       * same box — it compares the top against the eye and not the capsule — which is exactly why walking
+       * in never showed it.
+       *
+       * So the wall is drawn `drawOnly` down to the floor line, where nothing is seen through it, and its
+       * collider is the `collideOnly` twin beside it, based at `UP_Y + 0.8` = 3.2. That is inside a window
+       * with two ends, and both are tested: above 3.075 so no pose the descent passes under is refused,
+       * and below the crouched eye the storey itself can put at this lip (2.4 + 1.1 = 3.5), because a
+       * collider based higher would let a crouched player walk out over the well — the one thing the
+       * parapet's own 0.45 is there to prevent. 3.2..4.1 still covers the storey's standing band
+       * (2.4..4.1) and its crouched one (2.4..3.5), and still reads as an obstacle to the nav bake: 0.8
+       * under the storey's 1.9 m of headroom, and 3.0 above the room below's floor, past its own.
+       *
+       * The base is `UP_Y` rather than the room's own floor like the two runs above, and that leaves the
+       * stair's foot and the room below as they were: the flight's bottom tread is at 0.2, the collider
+       * starts above the capsule of anyone walking under it, and the room's ceiling hole is this same
+       * rectangle — so from the room the wall's foot lands on the hole's west edge and the two read as one
+       * line rather than as a wall floating over a ledge.
+       *
+       * **The north end, and the reading that once put a longer one there.** This run ends at
+       * `z1 + HALF_T` = 0.26 like the collider twin beside it, and `segmentBox` pads both by `WALL_T/2`,
+       * so the drawn face and the collider stop at z 0.36 together — the face of the flat's south wall.
+       * For a while it ended at `z1 + 2 * HALF_T`, on the strength of a reading taken from the *pressed*
+       * stance (15.76, 4.10, 0.46): that reading said the drawn edge stopped at 0.31 and a ray crossing
+       * 0.03 m north of it slipped through to the flight.
+       *
+       * It was an artifact of the probe and not a gap. `handles.look()` fires from
+       * `camera.position + 0.5 * dir` — offset to clear the lantern, the arm and the fist, which are
+       * children of the camera — so from a stance 0.35 m from this face the ray *starts* 0.15 m past it,
+       * and nothing that close can be tested with that tool at all. What those rows hit was the geometry
+       * *behind* the wall. Level rays from x 15.2 — 0.91 m of clearance, and pitch 0, so no aim to get
+       * wrong either — put the face at z 0.20..0.34 with the run ending at 0.36: 0.34 is the last hit
+       * inside, 0.36 grazes the corner, and 0.38 on lands on the imported model beyond. That is the box
+       * `segmentBox` builds from this run, with no shortfall to make up.
+       *
+       * Re-measured after the run was cut back: 0 of the 12 sample surfaces are visible from the landing
+       * (14.91, the reported stance, 1.2 m back), from 13.61 (2.6 m back) or from south of the well
+       * (14.91, −1.60). North of this face the slot between its own end (0.36) and the room's north wall
+       * (0.51) is over the storey's floor slab rather than over the well — the storey's hole is the well,
+       * z −1.08..0.16 — so a ray crossing the plane above 0.36 has solid floor beneath it and cannot come
+       * down the shaft. `tools/_wellsight.mjs` and `tools/_wellcorner.mjs` now name this blind spot when a
+       * sample falls inside it, instead of reporting what the ray found behind the wall as a sighting.
+       */
+      /**
+       * West head of the stairwell, extended to the flat's ceiling as well.
+       *
+       * It stopped at eye height (4.10) because that was enough to hide the flight from the
+       * landing — but the user asked for walls that touch the ceiling, and above 4.10 the shaft
+       * was open again. The drawn run now reaches `UPPER_PATCH.ceilY` (5.32) like the north and
+       * south lips.
+       *
+       * The `collideOnly` twin keeps its 3.2 base — that window is load-bearing for the descent
+       * (see above) — and only its top moves to the ceiling. A higher top cannot refuse any pose
+       * the lower one already allowed: the walker's capsule sits under 3.2 while descending, and
+       * the storey's own band (2.4..4.1) is entirely below 5.32.
+       */
+      { x1: HID_STAIR_WELL.x0, z1: HID_STAIR_WELL.z0 - HALF_T, x2: HID_STAIR_WELL.x0, z2: HID_STAIR_WELL.z1 + HALF_T, y0: UP_Y, y1: UPPER_PATCH.ceilY, drawOnly: true },
+      { x1: HID_STAIR_WELL.x0, z1: HID_STAIR_WELL.z0 - HALF_T, x2: HID_STAIR_WELL.x0, z2: HID_STAIR_WELL.z1 + HALF_T, y0: UP_Y + 0.8, y1: UPPER_PATCH.ceilY, collideOnly: true },
     ],
     tone: 'plaster',
   },
@@ -1004,7 +1370,7 @@ export const ROOMS: RoomSpec[] = [
  * The pieces that would be zero-width are dropped rather than emitted: a degenerate rect still matches
  * `x >= f.x0 && x <= f.x1`, so a sliver would hand `groundYAt` a floor at a height it should not have.
  */
-function subtractRect(outer: Rect, hole: Rect): Rect[] {
+export function subtractRect(outer: Rect, hole: Rect): Rect[] {
   // No overlap at all: the hole is somewhere else entirely.
   if (hole.x1 <= outer.x0 || hole.x0 >= outer.x1 || hole.z1 <= outer.z0 || hole.z0 >= outer.z1) {
     return [outer];

@@ -31,6 +31,15 @@ Thumbs.db
 # Editor temp
 .vite/
 *.tsbuildinfo
+# Vite's throwaway ESM copy of the config, left behind once per run; `npm run dev` makes a new one anyway.
+vite.config.ts.timestamp-*.mjs
+
+# Headless Chrome profiles the live probes run in, and the vite pid `tools/_cdplive.mjs stop` reads back.
+# The plain `.chromeprof/` above is an older one; these are named with a suffix, so the glob has to have one.
+.chromeprof*/
+.vite-live.pid
+# Scratch dumps from a probe session, all of them named `.tmp-*` by hand.
+.tmp-*
 
 # Environment
 .env
@@ -66,3 +75,16 @@ tools/.tmp/
 .dist-old-v9/
 .dist-old-v10/
 .dist-old-v11/
+
+# Screenshots and image dumps from debugging and probe sessions. They stay on disk; none of them ship with the game.
+shots/
+.thresh/
+.r7/
+tmp_frames/
+tools/_furn/
+tools/*.png
+/device-*.png
+/fist_look_*.png
+/tmp-*.png
+# One-off scratch scripts at the repo root.
+/tmp-*.mjs

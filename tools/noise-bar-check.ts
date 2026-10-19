@@ -157,9 +157,9 @@ console.log('\n=== A STUTTERING SPRINT MUST STILL FILL THE BAR ===');
 }
 
 // ---------------------------------------------------------------------------
-// 3. The alert is an edge, not a level: no machine-gunning while the bar sits high.
+// 3. Held at max she is re-pinged on a cooldown, never machine-gunned per frame.
 // ---------------------------------------------------------------------------
-console.log('\n=== THE ALERT FIRES ONCE PER CROSSING, NOT EVERY FRAME ===');
+console.log('\n=== A HELD MAX RE-PINGS ON A COOLDOWN, NOT EVERY FRAME ===');
 {
   const { sys, player, alerts } = make();
   player.running = true;
@@ -168,7 +168,8 @@ console.log('\n=== THE ALERT FIRES ONCE PER CROSSING, NOT EVERY FRAME ===');
   for (let i = 0; i < 60 * 30; i++) sys.update(DT, true);
 
   console.log(`      30 s held: level=${sys.getLevel().toFixed(3)}, alerts=${alerts.length}`);
-  check('one alert per sustained max, not one per frame', alerts.length === 1, `${alerts.length} alert(s)`);
+  check('a held max re-alerts (she keeps coming)', alerts.length > 1, `${alerts.length} alert(s)`);
+  check('but not per frame', alerts.length < 30, `${alerts.length} alert(s)`);
 }
 
 // ---------------------------------------------------------------------------

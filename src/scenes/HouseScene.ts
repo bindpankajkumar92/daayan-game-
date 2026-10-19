@@ -61,6 +61,7 @@ import {
   UPPER_INNER,
   UP_BACK_DOOR,
   UP_CHILD_DOOR,
+  UP_HIDDEN_DOOR,
   UP_SHRINE_DOOR,
   UP_Y,
 } from '@/world/HouseRooms';
@@ -264,6 +265,28 @@ export function buildHouseScene(
     // start on the floor rather than 10 cm under it: see the upper wing's three below, which had the
     // same construction and were measurably the reported artefact.
     { x: UPPER_INNER.x, z: UPPER_INNER.z, axis: 'z' as const, half: UPPER_INNER.half, y0: UP_Y, y1: UPPER_INNER.top, thickness: 0.16, sill: false },
+    // The hidden door's reveal — the third and last of the three things the carve through the flat's
+    // west panel left bare.
+    //
+    // This opening is a CarveBox through imported triangles (`UP_HIDDEN_CUT`) and not a framed run, so
+    // nothing had ever drawn a jamb on its edges: from the nook it was a rectangle sawn out of the wall,
+    // and from the top of the stair the same three cut faces read as the sides of a slot with the stair
+    // descending into it. The wall above the door and the wall below are the model's own, so the cut
+    // faces are the only thing this hole has, and a lining is what makes them read as a door.
+    //
+    // `y1` is the carve's own top rather than the door's header. The leaf is a 2.15 m door standing in a
+    // 2.03 m opening, so its top 12 cm is already buried in the wall above the hole — invisible, and the
+    // lintel should line the hole, not the leaf. `sill: false` because the opening's floor is the stair's
+    // own top tread and a threshold box there would be a step in the landing; it is also the case `sill`
+    // documents, where a sill box's top face lands exactly on the boards.
+    //
+    // `thickness: WALL_T` rather than UPPER_INNER's 0.16: that one lines a 0.16 m imported panel, and
+    // this is a hole in the floor plan at a wall the shell also draws north and south of it. The mouth
+    // matters too: the leaf is 1.01 m in a 1.24 m carve, so the jambs are also what closes the 11.5 cm of
+    // open slot either side of it down to 7.5 cm. A `fit` on the leaf to widen it instead is not an
+    // option — `armHiddenDoor` takes the leaf's collider from the placed model's own box, and widening
+    // that turned it into two 6.8 m bars across the flat. See the hidden-door row in ModelProps.
+    { x: UP_HIDDEN_DOOR.x, z: UP_HIDDEN_DOOR.z, axis: 'z' as const, half: UP_HIDDEN_DOOR.half, y0: UP_Y, y1: UP_HIDDEN_DOOR.top, thickness: WALL_T, sill: false },
     // The rear wing's five, all cut in east-west walls and all standing on the ground floor, so these
     // get jambs and a lintel and skip makeCasing's sill branch the way BEDROOM_DOOR does. Two off the
     // front half of the house into the back corridor, three off that corridor into the rooms behind it.
@@ -428,6 +451,7 @@ export function buildHouseScene(
    * appears, only without the ceremony.
    */
   let coffinLid: CoffinHandles | null = null;
+  let hiddenWardrobe: AnimatedFurnitureHandle | null = null;
   const animatedFurnitures: AnimatedFurnitureHandle[] = [];
   const altar = makeAltar(fx, PLACE.altar.x, PLACE.altar.z, BASE_Y, ALTAR_DISPLAY);
   fixtures.add(altar.group);
@@ -532,6 +556,38 @@ export function buildHouseScene(
   /** The screen's handle — mixer tick plus the opener the noise:alert path uses — null until placed. */
   let ritualScreen: RitualDoorsHandle | null = null;
 
+  // --- The book hands over the key ---
+  // The father's last line is "the first gate key is with this book, in the wardrobe", so the two
+  // have to actually be connected or the text is a lie the player can catch. It hangs off the clue
+  // loop's own first-read callback rather than wrapping `onUse` afterwards, and that is not a style
+  // choice: `onUse` passes its callback straight to `showNote`, so a wrapper added afterwards cannot
+  // reach it, and re-showing the note to attach one would reset the player's scroll position.
+  //
+  // Firing on *close* is the same rule the clue's own toast follows — a toast shown behind the open
+  // note is a toast nobody reads. The key is taken on that same closing frame: nothing can observe
+  // the wardrobe between the press and the close, and taking it here keeps the pick-up and its
+  // announcement in one place.
+  //
+  // It *returns its line* instead of calling showToast itself, because the HUD has a single toast
+  // slot and this callback already has one to publish. Two calls in one frame means the second
+  // silently overwrites the first, and the loser here would be the clue's own authored beat — the
+  // probe caught exactly that, with "He wrote it for you" vanishing behind the key. So the caller
+  // appends the two sentences and shows them together.
+  //
+  // The key is its own group (see HouseProps.hiddenKey) precisely so `visible = false` can remove it
+  // — everything else in HouseProps is merged by material and cannot be hidden individually.
+  //
+  // NOTE: this hands over KEY_OF.clock, which is the same key the bedroom strongbox already gives.
+  // That duplication is deliberate-but-open — see the note on the strongbox below — and nothing here
+  // should be read as settling which of the two stops offering it.
+  const handOff = (id: string): string | null => {
+    if (id !== 'hidden.book') return null;
+    if (!state.collectKey(KEY_OF.clock)) return null;
+    props.hiddenKey.visible = false;
+    hud.setKeyHeld(KEY_OF.clock, true);
+    return `The ${KEY_NAME[KEY_OF.clock]}, beside the diary.`;
+  };
+
   // --- Everything readable ---
   // One registration per CLUES entry that HouseProps published an anchor for, so a clue that has
   // writing but no place to lie simply does not appear rather than floating at the origin.
@@ -540,6 +596,9 @@ export function buildHouseScene(
   // code must be able to go back for it. The tension raise and the one-line beat fire on the first
   // read only, and they fire on *close*, because a toast shown behind the open note is a toast
   // nobody sees.
+  //
+  // `markSeen` returns true on the *first* read (see its own doc), so the two branches below are:
+  // first read -> open with the beat attached; every read after -> open with no callback at all.
   for (const [id, spec] of Object.entries(CLUES)) {
     const at = props.anchors[id];
     if (!at) continue;
@@ -547,19 +606,61 @@ export function buildHouseScene(
       id,
       pos: at,
       reach: 2.0,
-      label: () => spec.prompt,
+      label: () => {
+        if (id === 'hidden.book' && (!hiddenWardrobe || !hiddenWardrobe.isOpen())) {
+          return null;
+        }
+        return spec.prompt;
+      },
       onUse: () => {
+        if (id === 'hidden.book' && (!hiddenWardrobe || !hiddenWardrobe.isOpen())) {
+          return;
+        }
         if (!state.markSeen(id)) {
           showNote(overlay, spec.doc);
           return;
         }
         showNote(overlay, spec.doc, () => {
           if (spec.raises) state.raiseTension(spec.raises);
-          if (spec.firstToast) hud.showToast(spec.firstToast, 4.0);
+          // One toast, not two: whatever the clue says plus whatever its pick-up adds, in that order.
+          const extra = handOff(id);
+          const line = [spec.firstToast, extra].filter((s): s is string => !!s).join(' ');
+          if (line) hud.showToast(line, 4.0);
         });
       },
     });
   }
+
+  // --- The red key, on the gurney in the black magic room ---
+  //
+  // This is the key that opens the hidden door, and until now nothing in the game handed it over: the
+  // only caller of `collectRedKey()` was the DEV handle, so the hidden door could never be opened by
+  // playing and the whole room behind it was unreachable. Found by walking the objective chain
+  // end to end rather than by reading the code — the door's own prompt says "Locked" and there was no
+  // key anywhere to change that.
+  //
+  // Under the pillow, not on the table or the floor. The room is the lady's working room and the
+  // gurney is the one object in it a player already wants to look at; a key lying in the open beside
+  // it would be a pickup, and a key *under the pillow* is a thing someone hid. It also keeps the
+  // find inside the room the ritual story points at, so the two threads — the saint's work and the
+  // father's attempt to hide his son from it — meet in one place.
+  //
+  // `bed-hospital.glb` is at x -17.4, BASE_Y + 0.02, z 8.6, 2 m tall with the 1.37 m mattress span
+  // over x -18.4 .. -16.4 and z 7.94 .. 9.26 (see its ModelProps row). The pillow is modelled at the
+  // -z end, so the head is z 7.98 and the key sits just past it at z 7.72 — under the near edge,
+  // where a hand reaching from the foot of the bed arrives first.
+  const RED_KEY_AT = new Vector3(-17.4, BASE_Y + 1.34, 7.72);
+  interact.add({
+    id: 'blackmagic.red-key',
+    pos: RED_KEY_AT,
+    reach: 2.2,
+    label: () => (state.hasRedKey() ? null : 'Feel under the pillow'),
+    onUse: () => {
+      if (!state.collectRedKey()) return;
+      hud.showToast('A small red key, still warm. She keeps it under the pillow.', 4.0);
+      state.raiseTension('DISTURBING');
+    },
+  });
 
   // --- Walking out ---
   // The escape is not a button and not a prompt. Once the three bolts are back and the leaves have
@@ -835,6 +936,24 @@ export function buildHouseScene(
         onError: reportError,
       });
       if (h) animatedFurnitures.push(h);
+    }
+    if (name === 'hidden-wardrobe.glb') {
+      const h = armAnimatedFurniture({
+        id: 'hidden-wardrobe.glb',
+        root,
+        clips,
+        interact,
+        openLabel: 'Open Wardrobe',
+        closeLabel: 'Close Wardrobe',
+        openToast: 'You open the wardrobe.',
+        closeToast: 'You close the wardrobe.',
+        toast: (msg) => hud.showToast(msg, 3.0),
+        onError: reportError,
+      });
+      if (h) {
+        animatedFurnitures.push(h);
+        hiddenWardrobe = h;
+      }
     }
     if (name === 'dresser-bedroom') {
       const h = armAnimatedFurniture({
@@ -1125,6 +1244,39 @@ export function buildHouseScene(
      * forward vector rather than the controller's yaw so that "stand at the door and look at it"
      * means exactly what it sounds like — the answer describes the sightline, not an internal angle.
      */
+    /**
+     * What the interaction system currently holds, and which one it is offering.
+     *
+     * Added while wiring the hidden room's book, because "I published an anchor and no prompt
+     * appeared" has two very different causes that look identical from a screenshot: the anchor
+     * never reached `interact`, or it reached it and is out of reach / facing away. `ids` answers
+     * the first and `nearest` the second, with the distance and the facing dot product for the
+     * candidate closest to the crosshair.
+     *
+     *   __daayan.interactables()  -> { count, ids, current, nearest }
+     */
+    handles.interactables = () => {
+      const cam = engine.camera;
+      const dir = new Vector3();
+      cam.getWorldDirection(dir);
+      const ids = interact.listIds();
+      let nearest: Record<string, unknown> | null = null;
+      let best = Infinity;
+      for (const it of interact.list()) {
+        const to = it.pos.clone().sub(cam.position);
+        const dist = to.length();
+        if (dist > best) continue;
+        best = dist;
+        nearest = {
+          id: it.id,
+          dist: Number(dist.toFixed(3)),
+          reach: it.reach ?? 2.2,
+          facing: Number(dist < 1e-4 ? 1 : to.divideScalar(dist).dot(dir).toFixed(3)),
+          label: it.label(),
+        };
+      }
+      return { count: ids.length, ids, current: interact.getCurrent()?.id ?? null, nearest };
+    };
     handles.where = () => {
       const p = controller.getPosition();
       const dir = new Vector3();
@@ -1135,6 +1287,68 @@ export function buildHouseScene(
         `yaw(${Math.atan2(dir.x, dir.z).toFixed(2)})`
       );
     };
+    /**
+     * The simulation clock, in seconds. Added because every timing-sensitive probe was wrong without
+     * it, and the failure mode was silent and convincing.
+     *
+     * `engine.clock` advances by the fixed timestep once per logic step, and `GameLoop` clamps a
+     * frame's contribution to `maxFrameDt` (0.1 s) while running at most 8 steps per frame. In a
+     * Chrome tab that is not being composited, `requestAnimationFrame` drops to about 1 Hz, so the
+     * *game* advances ~0.1 s per real second — roughly 16x slower than wall time. A probe that waits
+     * on `setTimeout(3000)` therefore waits 0.3 s of game time, and then reports a slow tween as a
+     * stuck door. Waiting on this value instead makes a settle wait mean the same thing at any
+     * framerate.
+     *
+     *   __daayan.clock()  -> game seconds since the scene loaded
+     */
+    handles.clock = () => clock;
+    handles.warp = (x: number, y: number, z: number, yaw?: number) => {
+      controller.warpTo(new Vector3(x, y, z), yaw);
+    };
+    handles.openWardrobe = () => {
+      if (hiddenWardrobe && !hiddenWardrobe.isOpen()) {
+        hiddenWardrobe.toggle();
+      }
+    };
+    /**
+     * A live player-position readout, DEV builds only.
+     *
+     * Added because placing geometry from a screenshot needs the screenshot to carry a world
+     * coordinate, and a hand-drawn region cannot be converted into one. "Put a wall here" arrives as
+     * a 2D outline with no depth, no yaw and no scale; the same outline from two different rooms
+     * describes two different walls. With this on screen a screenshot is self-locating, and the
+     * numbers can be read straight off it.
+     *
+     * It sits above the AI readout rather than in it because that line is written by Debug.ts, which
+     * has no handle on the controller — and because this one is about the *player*, which is the thing
+     * a geometry report is always implicitly about.
+     *
+     * Prints the EYE position (what `getPosition()` returns) and the feet height beside it, since
+     * every floor and wall in this house is specified by the surface under the feet and the two differ
+     * by the eye height.
+     */
+    const posReadout = document.createElement('div');
+    posReadout.id = 'daayan-pos-readout';
+    posReadout.style.cssText =
+      'position:fixed;left:6px;bottom:66px;z-index:60;font:12px/1.35 ui-monospace,monospace;' +
+      'color:#e8e8e8;background:rgba(0,0,0,.62);padding:2px 7px;border-radius:3px;' +
+      'pointer-events:none;white-space:pre';
+    document.body.appendChild(posReadout);
+    const posTimer = window.setInterval(() => {
+      const at = controller.getPosition();
+      const dir = new Vector3();
+      engine.camera.getWorldDirection(dir);
+      const yaw = Math.atan2(dir.x, dir.z);
+      // The eye height is not reachable from here (`currentEyeHeight` and `opts` are both private), so
+      // the readout gives the eye and the feet as eye-minus-eye-height using the controller's standing
+      // default of 1.7. Crouched readings will be 0.6 out on the feet figure — visible and obvious
+      // rather than silently wrong, and the eye figure is exact either way.
+      const feet = at.y - 1.7;
+      posReadout.textContent =
+        `pos(${at.x.toFixed(2)}, ${at.y.toFixed(2)}, ${at.z.toFixed(2)})` +
+        `  feet(~${feet.toFixed(2)})  yaw(${yaw.toFixed(2)})`;
+    }, 200);
+    void posTimer;
     (window as unknown as { __daayan: unknown }).__daayan = handles;
   }
 
