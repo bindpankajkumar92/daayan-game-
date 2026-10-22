@@ -232,7 +232,7 @@ export const CLUES: Record<string, ClueSpec> = {
     raises: 'SUSPICIOUS',
     doc: {
       title: 'A framed photograph',
-      sub: 'Hall, beside the coat pegs',
+      sub: 'Hall, hung alone on the wall',
       style: 'photo',
       lines: [
         'Six people on the front steps of this house, squinting into a low sun. The frame is polished. The glass has been wiped recently, and often.',
@@ -294,7 +294,7 @@ export const CLUES: Record<string, ClueSpec> = {
     firstToast: 'The box is set to the hour on the clock.',
     doc: {
       title: 'A diary page',
-      sub: 'Bedroom, folded on the table beside the bed',
+      sub: 'Bedroom, dropped on the floor',
       style: 'diary',
       lines: [
         'I have stopped the clock. I put my thumb against the minute hand and held it there until it gave, and now the room is quiet in the way I wanted it.',
@@ -365,8 +365,8 @@ export const CLUES: Record<string, ClueSpec> = {
     raises: 'DISTURBING',
     firstToast: 'Behind the paper.',
     doc: {
-      title: 'A note weighted under a jar',
-      sub: 'Basement, on the workbench',
+      title: 'A note pinned to the wall',
+      sub: 'Basement, on the same wall as the panel',
       style: 'note',
       lines: [
         'The cold comes in behind the paper screen, not under the door.',

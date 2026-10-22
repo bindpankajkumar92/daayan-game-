@@ -665,11 +665,14 @@ export interface BuiltContainer {
 }
 
 /**
- * The bedroom code box: a strongbox with a four-digit dial, sitting on top of the dressing table.
+ * The bedroom code box: a strongbox with a four-digit dial, standing on the floor under the stopped clock.
  *
- * Placed at chest height on purpose. A box on the floor is something the player walks past; a box
- * at eye level next to the stopped clock puts the puzzle and half its clue in the same glance,
- * which is what §9's "minimal backtracking" rule is really asking for.
+ * It was built for chest height, on top of a dressing table, on the argument that a box on the floor is
+ * something the player walks past while a box beside the clock puts the puzzle and half its clue in the
+ * same glance. The dressing table was procedural furniture and has been removed; the box is the puzzle and
+ * stayed, so `y` is the floor now (PLACE.codeBox). The glance survives — the clock still hangs directly
+ * above it on the same wall, which is exactly where the diary sends the player to look — and the dial's
+ * reach in HouseScene was raised to cover the longer drop from a standing eye.
  */
 export function makeCodeBox(mats: FixtureMats, x: number, y: number, z: number): BuiltContainer {
   const group = new Group();

@@ -68,7 +68,7 @@ for (const [id, spec] of Object.entries(CLUES)) {
 }
 altar.symbolAnchors.forEach((p, i) => probes.push({ id: `altar.${ALTAR_DISPLAY[i]}`, pos: p, reach: 1.9 }));
 probes.push({ id: 'altar.key', pos: altar.keyAnchor, reach: 2.4 });
-probes.push({ id: 'box.dial', pos: box.anchor, reach: 1.7 });
+probes.push({ id: 'box.dial', pos: box.anchor, reach: 2.0 }); // mirrors HouseScene: the box is on the floor
 probes.push({ id: 'box.key', pos: box.keyAnchor, reach: 2.4 });
 probes.push({ id: 'panel.rockers', pos: panel.anchor, reach: 1.7 });
 probes.push({ id: 'panel.key', pos: panel.keyAnchor, reach: 2.4 });

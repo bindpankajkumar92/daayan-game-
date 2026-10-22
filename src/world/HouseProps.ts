@@ -7,16 +7,23 @@
  * describes. So the furniture is not decoration that happens to be near the clues; the furniture
  * is what makes the clues discoverable at all, and the two get built together here.
  *
- * That cuts both ways, and the living room is where it showed. Several rounds of "remove this" have
+ * That cuts both ways, and the living room is where it showed first. Several rounds of "remove this" have
  * taken the fireplace, the ledger table, the dining table, the chair and the rugs out of this file, and
  * each removal was also the removal of a clue's reason for being where it was. None of the three living
  * room clues was dropped with its furniture: they were re-homed onto what is left — the east wall, the
  * imported side table, the north wall beside the window — and the arithmetic for each new spot is in the
  * comments at the site, because a note pinned 1 cm inside a wall facing is a note nobody can read.
  *
+ * The last round took the rest of the hand-built furniture: every table, both chairs, the workbench and
+ * its jars, the crates and the barrel, the coat rail and its coat, the stick stand and the standing lamp.
+ * The same rule held. The diary page moved onto bed.glb's own side table, the draught note was pinned to
+ * the wall the workbench stood against, and the strongbox — a puzzle, not furniture — came down onto the
+ * floor under its clock. What this file builds now is wall dressing, marks, papers and candles, and the
+ * two fixed pieces (the stair rail and the cellar post) that read as the house rather than things in it.
+ *
  * Everything in this file is static and merged by material. Anything that moves is built by
- * Fixtures instead. Positions that both this file and the scene need — the dressing table and the
- * box on it, the workbench and the panel beside it — live in PLACE so they cannot drift apart.
+ * Fixtures instead. Positions that both this file and the scene need — the strongbox and the clock
+ * over it, the breaker panel and the diagram beside it — live in PLACE so they cannot drift apart.
  */
 
 import { BoxGeometry, CylinderGeometry, Group, Mesh, Vector3, type BufferGeometry } from 'three';
@@ -28,8 +35,16 @@ import type { AABB } from '@/player/FPController';
 
 /** Shared placements. The scene puts fixtures here; this file builds what they stand on. */
 export const PLACE = {
-  /** Bedroom strongbox — rests on the dressing table top, front face toward +z. */
-  codeBox: { x: -7.4, y: 0.76, z: 3.0 },
+  /**
+   * Bedroom strongbox — on the floor against the south wall, directly under the clock, front face toward +z.
+   *
+   * y 0, not the 0.76 it stood at. That was the top of a procedural dressing table, and the table has been
+   * removed with the rest of the hand-built furniture. The box is Puzzle 2 and could not go with it, so it
+   * came straight down onto the boards at the same x and z: still under the clock, and every anchor
+   * makeCodeBox derives from this point moves with it. HouseScene's 'box.dial' reach was raised to cover the
+   * extra drop from eye to dial — see the note there.
+   */
+  codeBox: { x: -7.4, y: 0, z: 3.0 },
   /**
    * Stopped clock, on the wall directly above the box.
    *
@@ -79,18 +94,6 @@ export interface HouseProps {
   geos: BufferGeometry[];
 }
 
-/** A slab on four legs. Used for every table in the house; the proportions are all that change. */
-function table(b: Batch, m: FixtureMats, x: number, z: number, w: number, d: number, topY: number, footY: number): void {
-  b.box(m.wood, w, 0.05, d, x, topY - 0.025, z);
-  const ix = w / 2 - 0.07;
-  const iz = d / 2 - 0.07;
-  for (const dx of [-ix, ix]) {
-    for (const dz of [-iz, iz]) {
-      b.box(m.wood, 0.06, topY - 0.05 - footY, 0.06, x + dx, (topY - 0.05 + footY) / 2, z + dz);
-    }
-  }
-}
-
 /** A sheet of paper lying flat, or pinned flat to a wall. */
 function sheet(b: Batch, m: FixtureMats, x: number, y: number, z: number, w: number, h: number, wall: 'x' | 'z' | 'flat', ry = 0): void {
   if (wall === 'flat') b.box(m.paper, w, 0.008, h, x, y, z, ry);
@@ -131,7 +134,7 @@ type Ctx = {
  * to — which means it must stay legible in the dark and must not hide anything. Two clues, both
  * at eye height on the way in.
  */
-function hall({ b, m, aabbs, at }: Ctx): void {
+function hall({ b, m, at }: Ctx): void {
   // The runner that lay here is gone with the other two — see living() for the one note covering all
   // three. What stays is the boot scuffs worn into the boards in front of the gate: not cloth, and the
   // only thing in this room that says eleven people walked in.
@@ -158,21 +161,15 @@ function hall({ b, m, aabbs, at }: Ctx): void {
   at['hall.notice'] = new Vector3(1.9, 1.45, -6.6);
 
   /*
-   * Coat pegs, and one good coat still hanging. Nobody who owned it left.
+   * No coat rail, no coat, no side table and no stick stand. The rail with its four brass pegs and the one
+   * good coat on them stood on the east wall at x 4.81; the side table with its dead oil lamp at (-4.6, -3.0)
+   * and the stand of walking sticks at (-4.5, -1.3) were the west side's. All four were hand-built boxes and
+   * cylinders and went with the rest of the procedural furniture. None of them published an anchor. The
+   * table's collider went with it, and shadows() drops its contact quad without being told.
    *
-   * The rail is at x 4.81, not the 4.86 it was screwed to. Same facing arithmetic as the notice, on the
-   * east wall this time: HALL.x1 is 5, so the panel is centred at 4.89 and fronts at 4.84, and a 5 cm rail
-   * at 4.86 spanned 4.835..4.885 — 5 mm of a 1.3 m rail showing, and the coat apparently hung off the
-   * stone. 4.81 spans 4.785..4.835 and stands 5.5 cm clear.
-   *
-   * The pegs and the coat stay where they are. The pegs are 10 cm cylinders lying along x at 4.8, so they
-   * run 4.75..4.85: they pass through the rail as pegs do and bury 1 cm of butt end in the facing, which
-   * is inside both the rail and the wall. The coat hangs at 4.68..4.84 across y 0.805..1.755 and the rail
-   * occupies y 1.81..1.89, so the two never meet on the axis that would show.
+   * The coat is still in the story — both photographs describe it — so the only text that had to change was
+   * hall.photo's `sub` in Clues.ts, which used the pegs as its landmark.
    */
-  b.box(m.wood, 0.05, 0.08, 1.3, 4.81, 1.85, -2.2);
-  for (const pz of [-2.7, -2.35, -2.0, -1.65]) b.cyl(m.brass, 0.016, 0.016, 0.1, 5, 4.8, 1.82, pz, 'x');
-  b.box(m.cloth, 0.16, 0.95, 0.42, 4.76, 1.28, -2.5);
 
   // The photograph, moved off the plaster and onto the facing for the third time on this wall: 4.825 puts
   // the 3 cm frame box's back exactly on the panel front at 4.84 and its print 4.1 cm proud of the stone,
@@ -181,15 +178,6 @@ function hall({ b, m, aabbs, at }: Ctx): void {
   // 4.58, which is the innermost x the player can stand at anyway.
   frame(b, m, 4.825, 1.68, -3.6, 0.5, 0.62, 'x', -1);
   at['hall.photo'] = new Vector3(4.58, 1.68, -3.6);
-
-  table(b, m, -4.6, -3.0, 0.5, 1.3, 0.76, 0);
-  aabbs.push(aabbOf(-4.6, 0, -3.0, 0.26, 0.66, 0.76));
-  // A dead oil lamp. The house has not had working light in a long time.
-  b.cyl(m.brass, 0.09, 0.11, 0.1, 8, -4.6, 0.81, -3.3);
-  b.cyl(m.dark, 0.06, 0.08, 0.18, 8, -4.6, 0.95, -3.3);
-
-  b.cyl(m.dark, 0.13, 0.15, 0.56, 8, -4.5, 0.28, -1.3);
-  for (const t of [0.2, -0.1, 0.35]) b.cyl(m.wood, 0.014, 0.014, 0.8, 4, -4.5 + t * 0.1, 0.62, -1.3 + t * 0.1);
 }
 
 // --- Hallway ---------------------------------------------------------------------------------
@@ -226,27 +214,20 @@ function hallway({ b, m }: Ctx): void {
 /**
  * The bedroom, and Puzzle 2's clue chain.
  *
- * The dressing table stands against the south wall with the box on it and the stopped clock hung
- * on the wall directly above, so the puzzle and the number it wants are in one glance — that is
- * §9's "minimal backtracking" taken literally. The diary that explains the connection is
- * deliberately *not* on that table: it is across the room by the bed, where somebody would
- * actually have written it. The player has to walk the room once. That is exploration; making
- * them walk to another floor for it would be backtracking.
+ * The strongbox stands on the floor against the south wall with the stopped clock hung on the wall
+ * directly above it, so the puzzle and the number it wants are in one glance — that is §9's "minimal
+ * backtracking" taken literally. The diary that explains the connection is deliberately *not* beside
+ * them: it is across the room on the bed's own side table, where somebody would actually have written
+ * it. The player has to walk the room once. That is exploration; making them walk to another floor for
+ * it would be backtracking.
  *
- * Nothing is spread further than one room. Two objects on the same table would also fight each
- * other for the interaction pick, and the box must always win at the box.
+ * Nothing is spread further than one room, and nothing readable is put next to the box: two things that
+ * close would fight each other for the interaction pick, and the box must always win at the box.
  */
-function bedroom({ b, m, aabbs, at }: Ctx): void {
-  const P = PLACE.codeBox;
-  // z 2.98 is against the plaster at 2.6, and stays there now that the wall wears a facing fronting at
-  // 2.76: the top spans 2.72..3.24, so its back 4 cm are inside the panel. Deliberate. A dressing table
-  // shoved into the wall reads as a dressing table against the wall, the overlap is behind the top where
-  // no eye line reaches, and the two legs at 2.79 and 3.17 both clear the facing. Pulling the table out
-  // to 3.04 to clear it would instead put a visible gap behind it and drag the box, the candle and the
-  // player's standing position with it, for nothing.
-  table(b, m, P.x, 2.98, 1.5, 0.52, P.y, 0);
-  aabbs.push(aabbOf(P.x, 0, 2.98, 0.76, 0.27, P.y));
-  candle(b, m, P.x - 0.58, P.y + 0.01, 2.92, 0.11);
+function bedroom({ b, m, at }: Ctx): void {
+  // The clock's anchor. The clock itself is a Fixture, because it has hands, and so is the strongbox under
+  // it — on the floor at PLACE.codeBox now that the dressing table it stood on is gone. That table took a
+  // collider and a candle with it, and nothing else.
   at['bedroom.clock'] = new Vector3(PLACE.clock.x, PLACE.clock.y, PLACE.clock.z + 0.1);
 
   /*
@@ -264,12 +245,33 @@ function bedroom({ b, m, aabbs, at }: Ctx): void {
    * under-bed spot; it is no longer the house's whole supply of them.
    */
 
-  // Bedside table: the diary page, and a candle burned down to nothing.
-  table(b, m, -4.7, 9.3, 0.46, 0.46, 0.56, 0);
-  candle(b, m, -4.62, 0.57, 9.42, 0.05);
-  sheet(b, m, -4.74, 0.575, 9.24, 0.24, 0.3, 'flat', 0.18);
-  at['bedroom.diary'] = new Vector3(-4.74, 0.66, 9.24);
-  aabbs.push(aabbOf(-4.7, 0, 9.3, 0.24, 0.24, 0.56));
+  /*
+   * The diary page, on bed.glb's own side table — the one on the room side of the bed.
+   *
+   * It lay on a hand-built bedside table at (-4.7, 9.3), 0.56 high with a candle burned down beside it,
+   * and that table and candle went with the rest of the procedural furniture. bed.glb ships a side table
+   * either side of its headboard, so the page did not have to go far or change its story: Clues.ts still
+   * says "folded on the table beside the bed", and now it is.
+   *
+   * Measured off the placed model rather than guessed: BedSideTable_SideTableMat_0 is both tables in one
+   * mesh, and split at x -7.8 the east one spans x -7.286 .. -6.866 by z 9.279 .. 9.579 with its top at
+   * y 0.378. The mattress's own box reaches x -7.235, so the top that is clear to lie on is x -7.235 ..
+   * -6.866. A 0.26 x 0.20 sheet skewed -0.12 rad covers 0.282 x 0.230 m, which centred at (-7.05, 9.43)
+   * is x -7.191 .. -6.909 by z 9.315 .. 9.545: inside on both axes, 3 cm or more clear of every edge.
+   * y 0.383 lays its 8 mm on the top with the 1 mm of lift the sill photograph below uses.
+   *
+   * This is the second sheet in this file standing on imported geometry — living.ledger on table.glb is
+   * the first — and it has the same weakness: retuning bed.glb's row (its height, x or z) moves this table
+   * and strands the page. The row carries a note saying so.
+   *
+   * The anchor is 8 cm above the page, as it was on the old table. The bed's base collider (HouseScene) is
+   * inset by the capsule radius, so a player can walk right up to the bed's east edge at x -6.75: the eye
+   * is then about 1.3 m from the anchor against a reach of 2.0, and still only 1.6 m from the foot of the bed.
+   */
+  // REMOVED at the user's request, along with bed.glb: the diary page is no longer placed. With no anchor
+  // published, HouseScene skips the 'bedroom.diary' clue entirely (it registers only anchored clues).
+  // sheet(b, m, -7.05, 0.005, 9.43, 0.26, 0.2, 'flat', -0.12);
+  // at['bedroom.diary'] = new Vector3(-7.05, 0.085, 9.43);
 
   /*
    * The window seat. A photograph left face down on the sill, which is a thing people do — and it is now
@@ -292,13 +294,8 @@ function bedroom({ b, m, aabbs, at }: Ctx): void {
   sheet(b, m, -8.95, 1.105, 6.0, 0.2, 0.26, 'flat', 0.1);
   at['bedroom.photo'] = new Vector3(-8.72, 1.1, 6.0);
 
-  // A chair pulled out and left at an angle, under the window.
-  b.box(m.wood, 0.44, 0.05, 0.44, -8.1, 0.45, 5.4, 0.4);
-  b.box(m.wood, 0.44, 0.5, 0.05, -8.1, 0.72, 5.62, 0.4);
-  for (const dx of [-0.17, 0.17]) {
-    for (const dz of [-0.17, 0.17]) b.box(m.wood, 0.05, 0.43, 0.05, -8.1 + dx, 0.215, 5.4 + dz);
-  }
-  aabbs.push(aabbOf(-8.1, 0, 5.4, 0.26, 0.26, 0.5));
+  // The chair that stood pulled out at an angle under this window, at (-8.1, 5.4), was hand-built and went
+  // with the rest of the procedural furniture. The photograph on the sill never depended on it.
 }
 
 // --- Living room -----------------------------------------------------------------------------
@@ -381,14 +378,11 @@ function living({ b, m, at }: Ctx): void {
    * straight line. With the cloth gone that reason is gone, so the row has been given `shadow: 1`.
    *
    * Nothing here published cloth into an aabb, so the rugs cost no collider and no contact quad on the
-   * way out. `m.cloth` still has the coats in the hall and this lamp's shade, so the material and its
-   * merged draw call both survive — taking the last user out is what would have needed care.
+   * way out. Nor did the standing lamp that stood in the north-east corner at (8.2, 8.8), an iron pole
+   * under a cloth shade, which went with the last of the procedural furniture. `m.cloth` survives both on
+   * the ritual room's rag and hangings, and Batch only emits a mesh for a material that still has geometry,
+   * so the last user of a material leaving would cost nothing either — m.brass is that case now.
    */
-
-  // Standing lamp, cold like everything else.
-  b.cyl(m.iron, 0.02, 0.02, 1.55, 6, 8.2, 0.79, 8.8);
-  b.cyl(m.iron, 0.16, 0.18, 0.03, 8, 8.2, 0.02, 8.8);
-  b.cyl(m.cloth, 0.17, 0.13, 0.24, 8, 8.2, 1.66, 8.8);
 }
 
 // --- Stair shaft -----------------------------------------------------------------------------
@@ -429,21 +423,23 @@ function basement({ b, m, aabbs, at }: Ctx): void {
   for (const dx of [-0.18, 0.18]) b.box(m.iron, 0.018, 0.018, 0.018, -20.62 + dx, P.y + 0.19, -1.79);
   at['basement.diagram'] = new Vector3(-20.62, P.y - 0.05, -1.6);
 
-  // Workbench. Tools, jars, and the note about the draught weighted under one of them.
-  b.box(m.wood, 2.2, 0.07, 0.66, -16.4, BASE_Y + 0.83, -1.55);
-  for (const dx of [-1.02, 1.02]) {
-    for (const dz of [-0.26, 0.26]) b.box(m.wood, 0.08, 0.79, 0.08, -16.4 + dx, BASE_Y + 0.4, -1.55 + dz);
-  }
-  aabbs.push(aabbOf(-16.4, BASE_Y, -1.55, 1.12, 0.34, BASE_Y + 0.87));
-  sheet(b, m, -16.4, BASE_Y + 0.875, -1.62, 0.26, 0.3, 'flat', 0.1);
-  b.cyl(m.dark, 0.055, 0.055, 0.13, 8, -16.34, BASE_Y + 0.94, -1.58);
-  at['basement.draught'] = new Vector3(-16.4, BASE_Y + 0.96, -1.3);
-  let s = 5;
-  for (let i = 0; i < 6; i++) {
-    s = (s * 41 + 13) % 89;
-    b.cyl(s % 2 ? m.paper : m.dark, 0.05, 0.05, 0.14, 7, -17.3 + i * 0.36, BASE_Y + 0.94, -1.4);
-  }
-  b.box(m.iron, 0.24, 0.03, 0.06, -15.8, BASE_Y + 0.88, -1.44, 0.5);
+  /*
+   * The note about the draught, pinned to the wall the workbench stood against.
+   *
+   * It lay on that bench weighted under a jar, and the bench, its six jars and its tool were hand-built
+   * and have gone with the rest of the procedural furniture. Pinned rather than dropped on the boards,
+   * because a note on the floor of an unlit cellar is a note nobody finds; and pinned the way hall.notice
+   * and living.list are, with the diagram's own facing arithmetic: the facing fronts at -1.84, so 8 mm of
+   * paper at -1.82 clears it by 1.6 cm and the pin's 2 cm cube at -1.80 stands proud of the paper's face.
+   *
+   * x -16.4 is the bench's old centre, which leaves 1.8 m of bare wall between the note and the hatch at
+   * -18.55, and y is the panel's own height, so the four things on this wall — diagram, panel, hatch and
+   * note — read along one line from the doorway. Its anchor stands 0.22 m into the room, as the diagram's
+   * does. Clues.ts's title and `sub` for it were reworded to match: there is no jar and no bench.
+   */
+  sheet(b, m, -16.4, P.y, -1.82, 0.26, 0.3, 'z');
+  b.box(m.iron, 0.02, 0.02, 0.02, -16.4, P.y + 0.115, -1.8);
+  at['basement.draught'] = new Vector3(-16.4, P.y, -1.6);
 
   /*
    * The tally, cut into the wall beside the door at the height of someone sitting down. Ten groups of
@@ -491,30 +487,24 @@ function basement({ b, m, aabbs, at }: Ctx): void {
   // on the doorway, which is the span the leaves actually cover between shut and fully open.
   b.box(m.dark, 0.10, 0.008, 3.2, -21.66, BASE_Y + 0.012, PLACE.doors.z);
 
-  // Support post, crates, coal. The room has to look used or the screen looks placed.
+  // Support post and coal. The post is the one piece of hand-built furniture-scale left in this room, and
+  // it stays because it reads as the house's own structure holding up the floor above, not as something
+  // stood in the cellar.
   b.cyl(m.wood, 0.16, 0.16, 2.8, 8, -18.0, BASE_Y + 1.4, 2.3);
   aabbs.push(aabbOf(-18.0, BASE_Y, 2.3, 0.17, 0.17, BASE_Y + 2.8));
-  // The crates are in the two corners the south wall does not use, and that is not decoration. They stood
-  // at (-17.6, 4.7) and (-16.7, 5.3) — mid-floor, on the diagonal between the stair and the black room's
-  // doorway — where they did two kinds of damage. For the player they closed the north half of the cellar:
-  // with the shelving, the washing machine and the model's own workbench lining the north wall from
-  // x -19.68 to -16.31, those two boxes carried the line east to -16.36 and left one lane through, hard
-  // against the east wall. For the cat they were the whole reason CatRoutes had no bs_n_w-bs_n_e rail:
-  // 0.18 m between the barrel's north-east corner and the crate's south-west one, for a cat 0.30 m wide.
-  //
-  // The corners are the point. The south wall itself is full and every metre of it is spoken for — the
-  // diagram at x -20.62, the breaker at PLACE.breaker.x, its hatch 0.95 m to the +x side of that, then the
-  // workbench from -17.52 to -15.28 — so a crate anywhere along it stands in front of something the player
-  // has to reach. What is left is the strip east of the workbench, where the player comes in, and the
-  // strip west of the diagram. Both are dead ends for a 0.70 m box, both are more than a metre from the
-  // nearest cat edge, and a crate by the door is the first thing the lantern picks out on the way down.
-  b.box(m.wood, 0.66, 0.62, 0.66, -14.42, BASE_Y + 0.31, -1.5);
-  b.box(m.wood, 0.56, 0.54, 0.56, -14.32, BASE_Y + 0.89, -1.42, 0.35);
-  b.box(m.wood, 0.6, 0.58, 0.6, -21.35, BASE_Y + 0.29, -1.45, 0.15);
-  aabbs.push(aabbOf(-14.4, BASE_Y, -1.48, 0.36, 0.36, BASE_Y + 1.16));
-  aabbs.push(aabbOf(-21.35, BASE_Y, -1.45, 0.34, 0.34, BASE_Y + 0.58));
-  b.cyl(m.wood, 0.28, 0.24, 0.78, 10, -20.4, BASE_Y + 0.39, 5.5);
-  aabbs.push(aabbOf(-20.4, BASE_Y, 5.5, 0.29, 0.29, BASE_Y + 0.78));
+  /*
+   * No crates and no barrel any more. The two stacked inside the door at (-14.42, -1.5), the one west of
+   * the diagram at (-21.35, -1.45) and the barrel at (-20.4, 5.5) were hand-built boxes and a cylinder, and
+   * they went with the workbench. Their three colliders went with them, which can only widen what the
+   * NavGrid and CatRoutes see — the bs_n_w-bs_n_e rail they were once moved off was already clear — and
+   * shadows() drops their quads without being told. basement.glb's own clutter along the north wall is
+   * what makes the room look used now.
+   *
+   * The coal keeps its old scatter exactly. Its positions come off the little LCG below, which the
+   * workbench's six jars used to advance first: six steps of (s * 41 + 13) % 89 from 5 land on 8, so
+   * seeding it at 8 directly leaves every lump where it lay.
+   */
+  let s = 8;
   for (let i = 0; i < 9; i++) {
     s = (s * 29 + 7) % 83;
     b.box(m.dark, 0.16, 0.13, 0.16, -21.2 + (s % 7) * 0.16, BASE_Y + 0.07, 3.9 + (s % 5) * 0.19, s * 0.2);
@@ -533,7 +523,7 @@ function basement({ b, m, aabbs, at }: Ctx): void {
  * with one another, and the twelfth column — one nail, no photograph, the word Hall already
  * written underneath — is the last thing the player needs told to them.
  */
-function ritual({ b, m, aabbs, at }: Ctx): void {
+function ritual({ b, m, at }: Ctx): void {
   const A = PLACE.altar;
 
   // Chalk. Two rings, the outer one gone over more than once.
@@ -581,14 +571,9 @@ function ritual({ b, m, aabbs, at }: Ctx): void {
   b.box(m.iron, 0.02, 0.02, 0.02, -25.4, BASE_Y + 1.72, -0.8);
   at['ritual.rite'] = new Vector3(-25.4, BASE_Y + 1.52, -0.6);
 
-  // A chair with straps on the arms, set well back from the circle.
-  b.box(m.wood, 0.5, 0.06, 0.5, -24.2, BASE_Y + 0.46, 4.3, -0.5);
-  b.box(m.wood, 0.5, 0.86, 0.06, -24.2, BASE_Y + 0.9, 4.54, -0.5);
-  for (const dx of [-0.2, 0.2]) {
-    for (const dz of [-0.2, 0.2]) b.box(m.wood, 0.06, 0.44, 0.06, -24.2 + dx, BASE_Y + 0.22, 4.3 + dz);
-  }
-  for (const dz of [-0.24, 0.24]) b.box(m.cloth, 0.1, 0.02, 0.12, -24.2, BASE_Y + 0.62, 4.3 + dz);
-  aabbs.push(aabbOf(-24.2, BASE_Y, 4.3, 0.32, 0.32, BASE_Y + 0.5));
+  // The chair with straps on its arms that stood well back from the circle, at (-24.2, 4.3), was hand-built
+  // and has gone with the rest of that furniture. It published no anchor; its collider and contact quad
+  // went with it, and the rag and the hangings below are what still keep m.cloth in this file.
 
   // A bowl and a cloth, both used. Nothing in this room has been cleaned, only rinsed.
   b.cyl(m.dark, 0.2, 0.15, 0.14, 12, -28.9, BASE_Y + 0.07, 4.7);
@@ -702,10 +687,11 @@ function hiddenRoom({ m, at, key }: Ctx): void {
  * file. So the footprint and the floor are both already known and correct, and a table that gets nudged
  * 20 cm in a later edit takes its shadow with it. A table that gets *deleted* takes it with it too,
  * which is what the several rounds of furniture removal this file has been through cost here: nothing.
+ * The last of them left a single entry, the cellar post, and this loop did not need to know that either.
  * Sharing one material means Batch merges however many there are into a single draw call.
  *
  * `minY` is the floor and not an assumption about it: every push in this file seats its box on the
- * storey it belongs to, which is why the basement's five come out at BASE_Y without this knowing that
+ * storey it belongs to, which is why the cellar post's comes out at BASE_Y without this knowing that
  * BASE_Y exists.
  */
 function shadows({ b, m, aabbs }: Ctx): void {

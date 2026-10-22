@@ -37,7 +37,7 @@ import {
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import type { AABB, FloorRect } from '@/player/FPController';
 import { makeCeilingBoards, makePlaster, makeWoodFloor, makeWoodPanel } from './ProcTextures';
-import { expandRun, segmentBox, type Box, type Rect, type Segment } from './HouseLayout';
+import { expandRun, segmentBox, WALL_T, type Box, type Rect, type Segment } from './HouseLayout';
 import { ROOMS, UPPER_PATCH, houseFloors, subtractRect } from './HouseRooms';
 
 /**
@@ -51,7 +51,10 @@ export const WALL_TILE = 3.0;
 export const WALL_TILE_U = 6.0;
 export const WALL_TILE_V = 3.0;
 /** Ceilings and the upper flat's ceiling patches. Floors have their own pair below. */
-const CEIL_TILE = 1.6;
+const CEIL_MAP = '/assets/textures/ceiling-wood.webp';
+/** Baked footprint of wood_ceiling.glb, in metres. See tools/bake-ceiling.mjs. */
+const CEIL_TILE_X = 3.0015;
+const CEIL_TILE_Z = 3.4488;
 const TRIM_TILE = 0.9;
 const SKIRT_H = 0.14;
 
@@ -383,6 +386,49 @@ function skirtBox(b: Box): Box {
   };
 }
 
+/** A roof slab is as thick as the walls it stands on, so its edge reads as their continuation. */
+const ROOF_T = WALL_T;
+/** BoxGeometry builds its faces as px, nx, py, ny, pz, nz and tags each with that index as a group. */
+const BOX_FACE_NY = 3;
+
+/**
+ * The roof over a room with `roof` set: a slab standing on the walls' tops, flush with their outer faces.
+ *
+ * It has no underside, and that is the point of building it here rather than reusing the ceiling. The
+ * room's ceiling is already a plane at the wall-top height facing down, which is why it vanishes from
+ * above; a slab's bottom face would land on that same plane facing the same way and z-fight it over the
+ * whole room. Nothing can see the missing face anyway: flush with the walls, every part of it is over a
+ * wall top or over the ceiling.
+ *
+ * A box through worldBox, like every wall, so it is subdivided against depth error and wears the same
+ * world-anchored plaster — which lets the caller merge it into the room's walls. That costs no draw call,
+ * and the plaster runs on up the fascia without a seam, so wall and roof edge read as one piece.
+ */
+function roofGeometry(floor: Rect, top: number): BufferGeometry {
+  const geo = worldBox(
+    {
+      cx: (floor.x0 + floor.x1) / 2,
+      cy: top + ROOF_T / 2,
+      cz: (floor.z0 + floor.z1) / 2,
+      w: floor.x1 - floor.x0 + WALL_T,
+      h: ROOF_T,
+      d: floor.z1 - floor.z0 + WALL_T,
+    },
+    WALL_TILE_U,
+    WALL_TILE_V,
+  );
+  const index = geo.getIndex();
+  if (index === null) return geo;
+  const kept: number[] = [];
+  for (const g of geo.groups) {
+    if (g.materialIndex === BOX_FACE_NY) continue;
+    for (let i = g.start; i < g.start + g.count; i++) kept.push(index.getX(i));
+  }
+  geo.setIndex(kept);
+  geo.clearGroups();
+  return geo;
+}
+
 export function buildHouse(anisotropy: number): BuiltHouse {
   const disposables: Array<{ dispose: () => void }> = [];
   const track = <T extends { dispose: () => void }>(x: T): T => {
@@ -460,13 +506,18 @@ export function buildHouse(anisotropy: number): BuiltHouse {
    *
    * Both keep their own rung on the depth ladder — see bias() — because that is about which surface
    * wins a coplanar tie at a doorway, not about what they are made of.
+   *
+   * The ceiling is the same treatment for the same reason: wood_ceiling.glb is 60,616 triangles for a
+   * 3.00 x 3.45 m patch, so tiling the geometry would put millions of triangles overhead. Its underside
+   * is baked by tools/bake-ceiling.mjs instead — mean 155,128,116, luma 134.9, i.e. 0.246 linear, so
+   * 0x9a9a9a brings it to 0.079 under a lantern. One material covers the whole house, cellar included.
    */
   const mats = {
     wallWarm: track(new MeshLambertMaterial({ map: texWallWarm, ...bias(WARM_Z) })),
     wallCool: track(new MeshLambertMaterial({ map: texWallCool, color: 0x9aa0a8, ...bias(COOL_Z) })),
     floorWood: track(new MeshLambertMaterial({ map: texFloorWood, color: 0x9a9a9a, ...bias(WARM_Z) })),
     floorStone: track(new MeshLambertMaterial({ map: texFloorWood, color: 0x8f9096, ...bias(COOL_Z) })),
-    ceil: track(new MeshLambertMaterial({ map: texCeil, ...bias(WARM_Z) })),
+    ceil: track(new MeshLambertMaterial({ map: texCeil, color: 0x9a9a9a, ...bias(WARM_Z) })),
     trim: track(new MeshLambertMaterial({ map: texTrim, ...bias(TRIM_Z) })),
     door: track(new MeshLambertMaterial({ map: texDoor, ...bias(TRIM_Z) })),
   };
@@ -537,6 +588,26 @@ export function buildHouse(anisotropy: number): BuiltHouse {
     },
   );
 
+  new TextureLoader().load(
+    CEIL_MAP,
+    (tex) => {
+      if (disposed) {
+        tex.dispose();
+        return;
+      }
+      tex.colorSpace = SRGBColorSpace;
+      tex.wrapS = MirroredRepeatWrapping;
+      tex.wrapT = MirroredRepeatWrapping;
+      pick(tex);
+      mats.ceil.map = tex;
+      mats.ceil.needsUpdate = true;
+    },
+    undefined,
+    () => {
+      console.warn(`ceiling map failed to load: ${CEIL_MAP}`);
+    },
+  );
+
   const group = new Group();
   group.name = 'house';
   const aabbs: AABB[] = [];
@@ -577,6 +648,9 @@ export function buildHouse(anisotropy: number): BuiltHouse {
         if (run.modelCollision !== true && run.drawOnly !== true) aabbs.push(boxToAabb(b));
       }
     }
+    // No collider and no `slabs` entry: nobody can reach a roof, and the riser pass is for slots a room
+    // can see into, which a roof's top is not.
+    if (room.roof === true) wallGeos.push(roofGeometry(room.floor, y1));
     addMerged(wallGeos, room.tone === 'plaster' ? mats.wallWarm : mats.wallCool, `${room.id}-walls`);
     addMerged(skirtGeos, mats.trim, `${room.id}-skirt`);
 
@@ -595,8 +669,8 @@ export function buildHouse(anisotropy: number): BuiltHouse {
      * the one at z1, not z0. The ceiling below rotates the other way, maps +y onto +z, and keeps its
      * z0 anchor — that asymmetry is the whole reason the two lines do not read alike.
      *
-     * The ceiling stays unanchored on CEIL_TILE. Its boards are still procedural, a ceiling is only
-     * ever seen at a grazing angle through a doorway, and this task is the floor.
+     * The ceiling is anchored the same way now that it wears the baked wood_ceiling.glb: its battens
+     * are a photographed pattern, and one restarted per room would step at every doorway.
      */
     const fw = room.floor.x1 - room.floor.x0;
     const fd = room.floor.z1 - room.floor.z0;
@@ -638,8 +712,8 @@ export function buildHouse(anisotropy: number): BuiltHouse {
         const cw = cr.x1 - cr.x0;
         const cd = cr.z1 - cr.z0;
         const ceilGeo = track(slabPlane(cw, cd));
-        anchorUv(ceilGeo, cw / CEIL_TILE, cd / CEIL_TILE, 0, 0);
-        const ceil = new Mesh(ceilGeo, room.tone === 'plaster' ? mats.ceil : mats.wallCool);
+        anchorUv(ceilGeo, cw / CEIL_TILE_X, cd / CEIL_TILE_Z, cr.x0 / CEIL_TILE_X, cr.z0 / CEIL_TILE_Z);
+        const ceil = new Mesh(ceilGeo, mats.ceil);
         ceil.rotation.x = Math.PI / 2;
         ceil.position.set((cr.x0 + cr.x1) / 2, y1, (cr.z0 + cr.z1) / 2);
         ceil.name = `${room.id}-ceil`;
@@ -680,8 +754,8 @@ export function buildHouse(anisotropy: number): BuiltHouse {
     slabs.push({ ...r, y: UPPER_PATCH.floorY, mat: floor.material as Material, kind: 'floor' });
 
     const ceilGeo = track(slabPlane(w, d));
-    anchorUv(ceilGeo, w / CEIL_TILE, d / CEIL_TILE, r.x0 / CEIL_TILE, r.z0 / CEIL_TILE);
-    const ceil = new Mesh(ceilGeo, upperWarm ? mats.ceil : mats.wallCool);
+    anchorUv(ceilGeo, w / CEIL_TILE_X, d / CEIL_TILE_Z, r.x0 / CEIL_TILE_X, r.z0 / CEIL_TILE_Z);
+    const ceil = new Mesh(ceilGeo, mats.ceil);
     ceil.rotation.x = Math.PI / 2;
     ceil.position.set(cx, UPPER_PATCH.ceilY, cz);
     ceil.name = `upper-patch-ceil-${i}`;
@@ -705,7 +779,8 @@ export function buildHouse(anisotropy: number): BuiltHouse {
     const geo = slabPlane(rs.len, rs.h);
     geo.rotateY(rs.rotY);
     geo.translate(rs.cx, rs.cy, rs.cz);
-    worldUv(geo, rs.kind === 'ceil' ? CEIL_TILE : rs.alongX ? FLOOR_TILE_X : FLOOR_TILE_Z);
+    if (rs.kind === 'ceil') worldUv(geo, CEIL_TILE_X, CEIL_TILE_Z);
+    else worldUv(geo, rs.alongX ? FLOOR_TILE_X : FLOOR_TILE_Z);
     const bucket = riserGeos.get(rs.mat);
     if (bucket) bucket.push(geo);
     else riserGeos.set(rs.mat, [geo]);

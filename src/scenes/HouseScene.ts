@@ -21,7 +21,6 @@
 
 import {
   AmbientLight,
-  Box3,
   Color,
   DirectionalLight,
   FogExp2,
@@ -72,7 +71,6 @@ import {
   makeBreakerPanel,
   makeCasing,
   makeClock,
-  makeCodeBox,
   makeFixtureMats,
   makeGate,
   type SymbolKind,
@@ -97,7 +95,6 @@ import { installFootsteps } from '@/audio/Footsteps';
 import { installCat } from '@/world/CatRoamer';
 import {
   ALTAR_DISPLAY,
-  BOX_CODE,
   BREAKER_ANSWER,
   BREAKER_LABELS,
   CLOCK_HOURS,
@@ -109,7 +106,6 @@ import { Hud } from '@/ui/Hud';
 import { NoiseSystem } from '@/game/NoiseSystem';
 import { OverlayLayer, overlayButton, overlayTitle } from '@/ui/OverlayLayer';
 import { showNote } from '@/ui/NoteOverlay';
-import { showKeypad } from '@/ui/KeypadOverlay';
 import { showSwitchPanel } from '@/ui/SwitchPanelOverlay';
 import { localize } from '@/ui/Strings';
 
@@ -187,26 +183,8 @@ export function buildHouseScene(
 
   const aabbs: AABB[] = [...house.aabbs, ...props.aabbs];
   const floors: FloorRect[] = [...house.floors];
-  /**
-   * A provisional mattress under the new spawn while bed.glb is in flight.
-   *
-   * Imported models load asynchronously, but the controller starts synchronously. Without this small
-   * surface its first gravity step sees only the bedroom floor at y=0 and drops the player through the
-   * not-yet-loaded bed before the title menu has even been dismissed. The placement hook below mutates
-   * this same object to the fitted model's exact footprint/top, because FPController holds `floors` by
-   * reference. 0.47 is the mattress measured when the row was authored (the headboard is 0.19 m above
-   * it); it is a boot-time fallback, not a second permanent source of truth.
-   */
-  const spawnMattress: FloorRect = {
-    // The bed lies length-along-x against the west wall (ModelProps' bed row), and SPAWN sits 0.25 m in
-    // from its foot edge on the centre line, so these offsets are that footprint: 2.1 m on x, 1.0 on z.
-    x0: SPAWN.x - 1.85,
-    x1: SPAWN.x + 0.25,
-    z0: SPAWN.z - 0.5,
-    z1: SPAWN.z + 0.5,
-    y: SPAWN.y - 1.7,
-  };
-  floors.push(spawnMattress);
+  // The provisional spawn mattress that stood in for bed.glb while it loaded is gone with the bed: the
+  // player now wakes standing on the bedroom floor, which is already in `house.floors`.
 
   // Everything interactive goes in one group so disposal is one traversal.
   const fixtures = new Group();
@@ -487,33 +465,7 @@ export function buildHouseScene(
   });
 
   // --- Puzzle 2: the hour on the clock ---
-  const box = makeCodeBox(fx, PLACE.codeBox.x, PLACE.codeBox.y, PLACE.codeBox.z);
-  fixtures.add(box.group);
-  aabbs.push(...box.aabbs);
   fixtures.add(makeClock(fx, PLACE.clock.x, PLACE.clock.y, PLACE.clock.z, 0, CLOCK_HOURS, CLOCK_MINUTES));
-  interact.add({
-    id: 'box.dial',
-    pos: box.anchor,
-    reach: 1.7,
-    label: () => (state.isSolved('clock') ? null : 'Work the dial'),
-    onUse: () => {
-      showKeypad(overlay, {
-        title: 'A strongbox',
-        sub: 'Four figures on a brass dial',
-        onSubmit: (code) => {
-          if (code !== BOX_CODE) return false;
-          if (state.solve('clock')) {
-            tween(0.8, (k) => {
-              box.lid.rotation.x = -k * 1.55;
-            });
-            placeKey('box.key', box.key, box.keyAnchor, KEY_OF.clock, 'A brass key, inside the box.');
-            hud.showToast('The lid comes up.', 3.0);
-          }
-          return true;
-        },
-      });
-    },
-  });
 
   // --- Puzzle 3: the two that stay down ---
   const panel = makeBreakerPanel(fx, PLACE.breaker.x, PLACE.breaker.y, PLACE.breaker.z);
@@ -809,48 +761,7 @@ export function buildHouseScene(
       daayanClips = clips;
       armDaayan(modelLoader, root, clips, reportError);
     }
-    if (name === 'bed.glb') {
-      root.updateWorldMatrix(true, true);
-      const bedBox = new Box3().setFromObject(root);
-      /**
-       * The headboard is 19 cm above the bedding in the fitted model. Box3.maxY is therefore not a
-       * walkable top — using it would float the player on the top rail. This offset is already encoded
-       * in the cat's `on: bed.glb, y: -0.19` placement; repeating the measured art fact here makes the
-       * player's feet and the cat agree on which surface is the mattress.
-       */
-      const mattressY = bedBox.max.y - 0.19;
-      const inset = 0.06;
-      spawnMattress.x0 = bedBox.min.x + inset;
-      spawnMattress.x1 = bedBox.max.x - inset;
-      spawnMattress.z0 = bedBox.min.z + inset;
-      spawnMattress.z1 = bedBox.max.z - inset;
-      spawnMattress.y = mattressY;
-
-      // The normal `collide:true` placement box was removed from this bed: a full-height AABB would
-      // overlap a capsule whose feet are on the mattress and lock the spawn in place. A base ending at
-      // the mattress blocks walking through the bed from the floor, while FPController deliberately
-      // ignores colliders whose max is at or below the player's feet when they stand on top.
-      // Inset the base by the capsule radius. The capsule still meets the visible bed edge from the
-      // floor, but after its centre leaves the mattress it no longer overlaps the base while gravity
-      // lowers it. A full-footprint box traps the player permanently at that transition: the feet drop
-      // to floor level while the capsule's trailing edge is still over the bed.
-      const baseInset = controller.getRadius() + 0.02;
-      aabbs.push({
-        minX: bedBox.min.x + baseInset,
-        maxX: bedBox.max.x - baseInset,
-        minY: bedBox.min.y,
-        maxY: mattressY,
-        minZ: bedBox.min.z + baseInset,
-        maxZ: bedBox.max.z - baseInset,
-      });
-
-      // Usually the title menu is still open and the player has not moved. Keep the distance gate so a
-      // very fast player who already stepped off the provisional surface is not teleported back when
-      // the model finishes decoding.
-      if (Math.hypot(controller.position.x - SPAWN.x, controller.position.z - SPAWN.z) < 0.2) {
-        controller.warpTo(new Vector3(SPAWN.x, mattressY + 1.7, SPAWN.z), SPAWN.yaw);
-      }
-    }
+    // (The bed.glb hook — mattress surface, base collider and spawn re-warp — was removed with the bed.)
     // Imported beds and closet are measured only after fitToHeight has written their scale. The hiding
     // arm ignores every other name, just like NoiseProps below.
     hiding.onPlaced(name, root);

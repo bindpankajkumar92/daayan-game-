@@ -572,7 +572,7 @@ export const UPPER_PATCH = {
  * now, and atan2 of its offset is -0.30 — so the first frame immediately shows a way out of the room
  * rather than the headboard.
  */
-export const SPAWN = { x: -7.0, y: 2.17, z: 9.0, yaw: -0.3 };
+export const SPAWN = { x: -7.0, y: 1.7, z: 9.0, yaw: -0.3 };
 
 // --- Stairs ---
 /** Top landing, flat, just outside the cellar door. */
@@ -850,6 +850,9 @@ export const ROOMS: RoomSpec[] = [
     height: BASE_CEIL_H,
     floor: BASEMENT,
     ceiling: true,
+    // This room, the ritual room and the black magic room are seen from above through the bedroom's
+    // west window; see RoomSpec.roof. The shaft needs none: its top, at 2.4, is above the window's eye.
+    roof: true,
     tone: 'cellar',
     walls: [
       // Split around the stair shaft, which owns the wall between them.
@@ -883,6 +886,7 @@ export const ROOMS: RoomSpec[] = [
     height: BASE_CEIL_H,
     floor: RITUAL,
     ceiling: true,
+    roof: true,
     tone: 'cellar',
     walls: [
       { x1: RITUAL.x0, z1: RITUAL.z0, x2: RITUAL.x0, z2: RITUAL.z1 },
@@ -899,6 +903,7 @@ export const ROOMS: RoomSpec[] = [
     height: 2.82,
     floor: BLACK,
     ceiling: true,
+    roof: true,
     tone: 'cellar',
     // South side omitted: that is the basement's north wall, and it carries BLACK_DOOR.
     walls: [

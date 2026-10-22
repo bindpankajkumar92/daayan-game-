@@ -114,6 +114,17 @@ export interface RoomSpec {
   /** Omit to leave the room open above (used for the tall stair shaft). */
   ceiling?: boolean;
   /**
+   * Cap the room with a roof that can be seen from outside: a slab over the walls' outer faces, standing
+   * on their tops. See HouseBuilder's roofGeometry.
+   *
+   * A ceiling cannot do this job. It is one plane facing down into the room, so from above it is
+   * back-face culled and the room reads as four walls with nothing on top. That never mattered while
+   * every room was only seen from inside, but the bedroom's west window looks straight down onto the
+   * basement wing, and from there the basement, ritual room and black magic room were open boxes —
+   * reported as "iss window se dekhne pe unn rooms me roof hai hi nahi".
+   */
+  roof?: boolean;
+  /**
    * Rectangles to leave out of this room's *walkable* floor.
    *
    * Separate from the visual opening on purpose, and the separation is the bug this exists to fix: the

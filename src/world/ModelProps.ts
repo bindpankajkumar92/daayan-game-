@@ -765,9 +765,9 @@ export const MODEL_PLACEMENTS: ModelPlacement[] = [
   // bottle.glb is authored Z-up — 0.414 : 0.414 : 1 with z longest and x = y, i.e. a cylinder whose
   // axis is z, which in a Y-up world is a bottle already lying down. `height` fits the longest axis,
   // so 0.32 is its length and it comes out 13.3 cm across. Yawed off the room's axes so it reads as
-  // dropped rather than set down, and clear of the coat pegs at x 4.8. It was also placed clear of the
-  // hall's runner (x -1 .. 1), which has since been removed; x 3.2 is kept because the pegs still argue
-  // for it and because a prop that has to be unmissable from the spawn should not be moved on a whim.
+  // dropped rather than set down, and clear of the coat pegs that hung at x 4.8. It was also placed clear of
+  // the hall's runner (x -1 .. 1); both have since been removed, and x 3.2 is kept because a prop that has
+  // to be unmissable from the spawn should not be moved on a whim.
   { name: 'bottle.glb', height: 0.32, x: 3.2, z: -5.2, yaw: 0.7, shadow: 1 },
 
   // --- Hallway ---
@@ -901,7 +901,13 @@ export const MODEL_PLACEMENTS: ModelPlacement[] = [
   // Startup-visible: the player wakes on this mattress. HouseScene registers a low base collider plus a
   // walkable mattress once the measured box exists; a full `collide` box would trap a capsule whose feet
   // are already on top of it. `first` puts it immediately after the gate in load order.
-  { name: 'bed.glb', height: 2.1, x: -7.8, z: 9.0, yaw: Math.PI, first: true, shadow: 1 },
+  //
+  // bedroom.diary lies on this model's east side table (HouseProps.bedroom, measured top y 0.378 at
+  // x -7.286 .. -6.866, z 9.279 .. 9.579), so retuning `height`, `x` or `z` here strands that page.
+  // REMOVED: bed.glb was taken out of the bedroom at the user's request. The player now wakes standing on
+  // the floor (SPAWN), the diary page lies on the floor where the side table was, and the cat below lies on
+  // the boards instead of the mattress.
+  // { name: 'bed.glb', height: 2.1, x: -7.8, z: 9.0, yaw: Math.PI, first: true, shadow: 1 },
   // Curled on the mattress. `on` reads the bed's measured top, which is the headboard rail at 0.66,
   // so y drops to the bedding at 0.47; retuning the bed still carries the cat with it. The bed turned
   // length-along-x against the west wall with its head at -x, so the foot end is +x and the cat's old
@@ -912,7 +918,8 @@ export const MODEL_PLACEMENTS: ModelPlacement[] = [
   // Its shadow lands on the bedding rather than on the floor, which is what `on` buys and is the whole
   // reason it is worth having here: a cat on a mattress with a shadow on the boards below would read as
   // hovering twice over. 0.8, and its 0.36 x 0.24 m quad stays well inside the 2.1 x 1.0 m bed.
-  { name: 'cat-still.glb', height: 0.45, x: -7.7, y: -0.19, z: 9.0, yaw: -Math.PI / 2, on: 'bed.glb', shadow: 0.8 },
+  // REMOVED at the user's request, along with bed.glb.
+  // { name: 'cat-still.glb', height: 0.45, x: -7.7, z: 9.0, yaw: -Math.PI / 2, shadow: 0.8 },
   // The three imported sleepers that stood in this room -- closet-old, bed-horror, bed-old -- are placed in
   // the rear and upper wings now. Their rows travelled whole and nothing about them was re-measured, because
   // each `height` is a fit rather than a rescale (the closet is 1.317 x 2.118 x 0.692 with y longest,
@@ -927,18 +934,30 @@ export const MODEL_PLACEMENTS: ModelPlacement[] = [
   // ordinary furniture wherever they landed. This room keeps bed.glb, which is a BED_NAMES spot itself, so
   // the player still wakes beside somewhere to hide.
   //
-  // What is left is the room the clue trail needs and nothing more: the spawn bed and its cat, the dressing
-  // table with the code box and the stopped clock over it, the bedside table with the diary, and the window
-  // seat with the photograph. The north-east and south-east bands HouseProps leaves empty -- x -4.1 .. -1.2
+  // What is left is the room the clue trail needs and nothing more: the spawn bed and its cat, with the
+  // diary page on the bed's own side table; the code box on the floor with the stopped clock over it; and
+  // the window seat with the photograph. (The dressing table the box stood on and the bedside table the
+  // diary lay on were HouseProps' procedural furniture, and both are gone.) The north-east and south-east
+  // bands HouseProps leaves empty -- x -4.1 .. -1.2
   // by z 8.0 .. 10.1 and x -4.1 .. -1.2 by z 2.7 .. 5.7 -- are now empty in fact as well as by intention,
   // which matters at CatRoutes' north rail: that rail was pinched to 0.59 m by bed-horror's west face and is
   // pinched by nothing now. Its nodes stay where they were measured rather than moving back, since widening
-  // Bedroom vanity dresser with lamp and animated sliding drawer.
+  // a gap cannot break a route.
+  //
+  // Bedroom vanity dresser with animated sliding drawer.
   // Placed along the bedroom's north wall, east of the back corridor door.
+  //
+  // `drop: ['Group009']` removes the lamp's white cone shade (Cylinder002) and the small socket inside it
+  // (Object023), at the user's request. The lamp body, Cylinder001, ships with a fully transparent material
+  // and was never visible, which is why the shade looked like it was floating; it stays because it is not
+  // seen. `drop` runs before the fit, and the shade was the model's tallest point: source y -0.084 .. 2.807
+  // (2.891) with the shade, -0.084 .. 2.306 (2.390) without. So `height` goes from 1.4 to 1.4 * 2.390 / 2.891
+  // = 1.157, which keeps the dresser at the same scale it had before. x/z centre and the floor are unchanged.
   {
     name: 'dresser-bedroom.glb',
     id: 'dresser-bedroom',
-    height: 1.4,
+    drop: ['Group009'],
+    height: 1.157,
     x: -2.8,
     z: 9.5,
     yaw: Math.PI,
@@ -959,7 +978,7 @@ export const MODEL_PLACEMENTS: ModelPlacement[] = [
   // door needs an open/close tap on every threshold and buys nothing. yaw -1.0 rad swings the leaf 57 deg
   // into the room off a notional hinge at the west jamb -- at 2.15 tall it is 1.074 wide, and centred at
   // (-5.51, 3.05) its hinge edge lands on (-5.80, 2.60), which is BEDROOM_DOOR's west jamb exactly, and its
-  // free edge on (-5.22, 3.50), clear of the dressing table at x <= -6.64. (It was also placed clear of a
+  // free edge on (-5.22, 3.50), clear of the strongbox on the floor at x <= -7.18. (It was also placed clear of a
   // bedroom rug at z >= 4.8, since removed; nothing was moved for that.) That leaves 1.02 m of the 1.6 m
   // opening to walk through. The leaf being narrower than the opening is invisible on an ajar door, which
   // is why BEDROOM_DOOR.half stays at 0.8 and the casing is untouched.
@@ -2632,7 +2651,6 @@ export function installModels(
   // marking it `first` in one place.
   const startupPending = new Set([
     'gate-main.glb',
-    'bed.glb',
     ...WALL_PANELS.filter((p) => p.first === true).map((p) => p.id ?? p.name),
   ]);
   let resolveStartup!: () => void;

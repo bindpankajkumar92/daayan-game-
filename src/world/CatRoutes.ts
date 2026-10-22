@@ -61,8 +61,9 @@ const GROUND: readonly (readonly [string, number, number])[] = [
   // 0.2 m steps: every x from -3.0 to -4.0 hit the bed, -4.4 to -5.0 hit the table, and only -4.2 and a
   // second slot at -5.2 passed at all.
   //
-  // That bed is in the shrine now, so the only thing left on the rail is the bedside table and the gap is
-  // open from -4.46 east to the far wall. The nodes are left where they were measured on purpose: widening
+  // That bed is in the shrine now, and the bedside table that pinched the other side has since been removed
+  // with the rest of HouseProps' procedural furniture, so nothing is left on the rail at all. The nodes are
+  // left where they were measured on purpose: widening
   // a gap cannot break a route, checkRoutes() has nothing left to unlink here, and a rail put back to -3.6
   // would be a second set of numbers nobody has swept.
   ['bd_thr', -4.6, 2.6],
@@ -176,8 +177,9 @@ export const CAT_CHAINS: readonly string[] = [
   // (-17.6, 4.7) and (-16.7, 5.3): the only opening left was the 0.18 m diagonal between the barrel's
   // north-east corner and the crate's south-west one, for a cat 0.30 m wide, and a sweep at every
   // clearance from 0.15 up found nothing north of z 4 that joined the west pocket to the east band. Those
-  // crates now sit against the south wall (HouseProps.basement), because they were closing the player's
-  // way to the black room's doorway as well. Swept again at 0.15 over the cat's own y band: the whole
+  // crates were moved against the south wall (HouseProps.basement), because they were closing the player's
+  // way to the black room's doorway as well, and have since been removed altogether with the barrel. Swept
+  // again at 0.15 over the cat's own y band while they stood: the whole
   // segment is clear, and it passes half a metre south of the model's workbench at its closest.
   'bs_in bs_n_e bs_n_w bs_tbl_w bs_mid',
   'rt_thr rt_in rt_altar_e',
