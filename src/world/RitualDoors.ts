@@ -44,7 +44,14 @@
  * missing-node warning for each; keeping it costs 92 vertices and is what "intact" means here.
  */
 
-import { AnimationMixer, LoopOnce, Vector3, type AnimationClip, type Object3D } from 'three';
+import {
+  AnimationMixer,
+  LoopOnce,
+  Vector3,
+  type AnimationAction,
+  type AnimationClip,
+  type Object3D,
+} from 'three';
 import { RITUAL_DOOR } from '@/world/HouseRooms';
 import type { AABB } from '@/player/FPController';
 import type { InteractionSystem } from '@/game/Interaction';
@@ -105,13 +112,14 @@ export function armRitualDoors(
 
   const clip = clips.find((c) => c.name === CLIP_NAME) ?? clips[0];
   let mixer: AnimationMixer | null = null;
-  /** Set alongside the mixer; the one thing onUse has to do to the animation. */
-  let release: (() => void) | null = null;
+  let action: AnimationAction | null = null;
+  /** True while the close runs backwards; cleared when it reaches the closed keyframe. */
+  let closing = false;
   if (clip === undefined) {
     deps.onError(new Error(`${CLIP_NAME} missing from doors-sliding.glb`), 'ritual-doors:clip');
   } else {
     mixer = new AnimationMixer(root);
-    const action = mixer.clipAction(clip);
+    action = mixer.clipAction(clip);
     action.setLoop(LoopOnce, 1);
     // Hold the last frame rather than snapping shut again. clampWhenFinished also parks the action
     // paused when it ends, so the tick below costs nothing for the rest of the game.
@@ -122,44 +130,88 @@ export function armRitualDoors(
     action.time = SLIDE_START;
     action.paused = true;
     mixer.update(0);
-    release = () => {
-      action.paused = false;
-    };
   }
 
   let open = false;
+  /** The hunt starts on the first opening only; closing the screen does not undo that. */
+  let everOpened = false;
+
+  const setLeavesVisible = (visible: boolean): void => {
+    for (const name of LEAF_NAMES) {
+      const leaf = root.getObjectByName(name);
+      if (leaf) leaf.visible = visible;
+    }
+  };
+
   /**
-   * The one way the doorway ever opens, whether the hand on the screen is the player's or the
-   * noise's. Everything that has to happen together lives here so the two callers cannot drift.
+   * Open the doorway, whether the hand on the screen is the player's or the noise's. Everything that
+   * has to happen together lives here so the two callers cannot drift.
    */
   const openScreen = (toastMessage?: string): void => {
     if (open) return;
     open = true;
+    closing = false;
     // Dropped below the world rather than spliced out: FPController ignores boxes that end under the
     // player's feet, and the array it holds is shared.
     block.minY = -60;
     block.maxY = -59.8;
-    if (release === null) {
-      for (const name of LEAF_NAMES) {
-        const leaf = root.getObjectByName(name);
-        if (leaf) leaf.visible = false;
-      }
+    if (action === null) {
+      setLeavesVisible(false);
     } else {
-      release();
+      action.timeScale = 1;
+      action.paused = false;
     }
-    deps.onOpen();
+    if (!everOpened) {
+      everOpened = true;
+      deps.onOpen();
+    }
     if (toastMessage !== undefined) deps.toast(toastMessage);
   };
+
+  /** Slide the leaves back and put the doorway's blocker back. Reopening stays available. */
+  const closeScreen = (toastMessage?: string): void => {
+    if (!open) return;
+    open = false;
+    block.minY = RITUAL_DOOR.bottom;
+    block.maxY = RITUAL_DOOR.top;
+    if (action === null) {
+      setLeavesVisible(true);
+    } else {
+      // Play the same baked clip backwards from its open end. The first 1.5 s of the clip is the
+      // catch moving while the leaves stand still, so the close stops at that keyframe instead of
+      // grinding through it.
+      closing = true;
+      action.timeScale = -1;
+      action.paused = false;
+    }
+    if (toastMessage !== undefined) deps.toast(toastMessage);
+  };
+
   deps.interact.add({
     id: 'basement.doors',
     // Just off the leaves' own face, at chest height, so the prompt belongs to the screen and not to
     // the wall behind it.
     pos: new Vector3(-21.6, RITUAL_DOOR.bottom + 1.1, RITUAL_DOOR.z),
     reach: 2.0,
-    label: () => (open ? null : 'Slide the screen aside'),
-    onUse: () => openScreen('Cold air. There is a doorway behind it.'),
+    label: () => (open ? 'Slide the screen shut' : 'Slide the screen aside'),
+    onUse: () => {
+      if (open) closeScreen('The screen slides shut.');
+      else openScreen('Cold air. There is a doorway behind it.');
+    },
   });
 
-  const tick = mixer;
-  return { tick: tick === null ? null : (dt) => tick.update(dt), open: openScreen };
+  return {
+    tick:
+      mixer === null || action === null
+        ? null
+        : (dt) => {
+            mixer.update(dt);
+            if (closing && action.time <= SLIDE_START) {
+              action.time = SLIDE_START;
+              action.paused = true;
+              closing = false;
+            }
+          },
+    open: openScreen,
+  };
 }

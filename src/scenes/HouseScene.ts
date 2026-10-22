@@ -429,11 +429,24 @@ export function buildHouseScene(
    * appears, only without the ceremony.
    */
   let coffinLid: CoffinHandles | null = null;
+  let coffinOpenRequested = false;
   let hiddenWardrobe: AnimatedFurnitureHandle | null = null;
   const animatedFurnitures: AnimatedFurnitureHandle[] = [];
   const altar = makeAltar(fx, PLACE.altar.x, PLACE.altar.z, BASE_Y, ALTAR_DISPLAY);
   fixtures.add(altar.group);
   aabbs.push(...altar.aabbs);
+  interact.add({
+    id: 'coffin.lid',
+    pos: new Vector3(PLACE.altar.x, BASE_Y + 0.35, PLACE.altar.z),
+    reach: 2.4,
+    label: () => (coffinOpenRequested ? null : 'Open the coffin'),
+    onUse: () => {
+      if (coffinOpenRequested) return;
+      coffinOpenRequested = true;
+      coffinLid?.open();
+      hud.showToast('The lid of the coffin swings open.', 3.4);
+    },
+  });
   let seq: SymbolKind[] = [];
   altar.symbolAnchors.forEach((anchor, i) => {
     const kind = ALTAR_DISPLAY[i];
@@ -828,10 +841,9 @@ export function buildHouseScene(
       });
     }
     if (name === 'coffin-ritual') {
-      // The second placement that wants the file's clips: the lid's swing is a baked ease the scene
-      // must not re-ease, so Coffin builds its own mixer, holds it shut, and hands back the tick the
-      // frame loop calls and the release the puzzle's solve fires.
+      // The lid's swing is the model's baked ease, so Coffin owns the mixer and the frame loop ticks it.
       coffinLid = armRitualCoffin(root, clips, reportError);
+      if (coffinOpenRequested) coffinLid?.open();
     }
     if (name === 'wardrobe-chateau') {
       const h = armAnimatedFurniture({

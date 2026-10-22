@@ -572,84 +572,21 @@ export function makeAltar(
   x: number,
   z: number,
   floorY: number,
-  kinds: SymbolKind[],
+  _kinds: SymbolKind[],
 ): BuiltAltar {
   const group = new Group();
-  /*
-   * The ledge is gone — the player asked for the coffin to stand alone in its circle, and the 0.42 x 2.4
-   * slab with an iron top that stood beside it was the thing they pointed at. What is left is the four
-   * symbols, each on its own stone stub on the floor, on the same line the ledge held them on: LX is that
-   * ledge's centre, so every offset below and the chalk ring HouseProps draws around all of this still
-   * land where they were authored. The coffin body is 1.10 m wide and lies along z, so its east face is
-   * at x + 0.55 and the stubs stand 0.40 m clear of it.
-   *
-   * East is not a choice the ledge leaving reopens. See Coffin: the lid hinges on a vertical axis and
-   * sweeps ~173 deg *west*, so anything standing on the lid — or west of the body — is in its path. East
-   * is the safe side and the side the player walks in on.
-   */
-  const LX = x + 0.95;
-  /*
-   * Stub height, and it is a reachability number rather than a styling one. Each symbol's prompt sits on
-   * top of its stub with a reach of 1.9 m measured from the eye at 1.7: laid on the bare floor a symbol
-   * is already 1.58 m from a player standing over it, 0.32 m of slack in a check that flags anything
-   * under 0.35 as tight, and that is before the player has to stand anywhere in particular. 0.3 m of
-   * stub buys the slack back and keeps four small carvings told apart at a glance, which was the other
-   * half of what the ledge and its pedestals were doing.
-   */
-  const STUB = 0.3;
-  const TOP = floorY + STUB;
-
-  const symbolAnchors: Vector3[] = [];
-  const flames: Mesh[] = [];
-  const offsets = [-0.93, -0.31, 0.31, 0.93];
-  for (let i = 0; i < kinds.length; i++) {
-    const oz = z + (offsets[i] ?? 0);
-    const kind = kinds[i];
-    if (!kind) continue;
-    // The stub, standing on the floor where a pedestal on a ledge used to stand on a ledge.
-    group.add(boxMesh(mats.dark, 0.18, STUB, 0.18, LX, floorY + STUB / 2, oz));
-    const sym = makeSymbol(kind, mats);
-    sym.position.set(LX, TOP + 0.12, oz);
-    sym.rotation.y = -Math.PI / 2;
-    group.add(sym);
-    symbolAnchors.push(new Vector3(LX, TOP + 0.12, oz));
-
-    // Candles on the floor beside their stubs. 0.24 m east clears the 18 cm stub by 12 cm and leaves
-    // the flame where the player's eye already is when the symbol beside it is the thing under the
-    // prompt, so lighting one still reads as this symbol's candle rather than as the next one's.
-    const candle = new Mesh(new CylinderGeometry(0.024, 0.028, 0.13, 6), mats.paper);
-    candle.position.set(LX + 0.24, floorY + 0.065, oz);
-    group.add(candle);
-    const flame = new Mesh(new CylinderGeometry(0.001, 0.016, 0.06, 5), mats.glow);
-    flame.position.set(LX + 0.24, floorY + 0.16, oz);
-    flame.visible = false;
-    group.add(flame);
-    flames.push(flame);
-  }
-
-  // The key waits inside the coffin, laid on its floor at the body's centre. It is invisible until
-  // the sequence is solved and the lid swings off; then it lies in the open shell, facing up at the
-  // player who is standing east of it. A key lying in a shadowed hole with nothing glowing on it (§8)
-  // is a key nobody finds on a phone screen — so it is presented by the opening, not hidden by it.
   const key = makeKey(mats);
   key.position.set(x, floorY + 0.3, z);
   key.rotation.x = Math.PI / 2;
   key.visible = false;
   group.add(key);
 
-  // Flames toggle individually and the key is revealed later. Everything else is rigid dressing and
-  // may collapse to one draw per material.
-  mergeStaticChildren(group, [...flames, key]);
   return {
     group,
-    symbolAnchors,
-    flames,
+    symbolAnchors: [],
+    flames: [],
     key,
     keyAnchor: new Vector3(x, floorY + 0.32, z),
-    // Nothing here is collided any more. The ledge's box was the only entry, and four 18 cm stubs 0.3 m
-    // tall do not want one each: they stand inside the chalk ring the player has to walk into to reach
-    // them, so a collider there would push the player back out of their own reach. The coffin body still
-    // gets its own from the placement row.
     aabbs: [],
   };
 }

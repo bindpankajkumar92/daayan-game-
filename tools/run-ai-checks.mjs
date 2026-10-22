@@ -54,6 +54,10 @@ const CHECKS = [
   // The consequence of a catch, and that a respawn leaves her able to hunt again: the two things the
   // `game:caught` wiring has to get right, in either direction.
   ['caught', 'caught-check.ts'],
+  // Scene-content regressions found in play: the ritual coffin must not auto-open, and its screen
+  // must keep offering a way to close after it has been slid open.
+  ['ritual-cleanup', 'ritual-cleanup-check.ts'],
+  ['ritual-doors', 'ritual-doors-check.ts'],
   // Last: it is the slowest (several 90-240 s scripted sessions), and it is the suite that guards the
   // specific faults found in play rather than the spec's general properties.
   ['playtest', 'playtest-check.ts'],

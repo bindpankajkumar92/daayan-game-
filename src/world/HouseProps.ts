@@ -112,12 +112,6 @@ function frame(b: Batch, m: FixtureMats, x: number, y: number, z: number, w: num
   }
 }
 
-/** An unlit candle stub. There are a lot of these; none of them is ever a light source. */
-function candle(b: Batch, m: FixtureMats, x: number, y: number, z: number, h = 0.14): void {
-  b.cyl(m.paper, 0.022, 0.026, h, 6, x, y + h / 2, z);
-  b.cyl(m.dark, 0.004, 0.004, 0.03, 4, x, y + h + 0.014, z);
-}
-
 type Ctx = {
   b: Batch;
   m: FixtureMats;
@@ -321,22 +315,7 @@ function bedroom({ b, m, at }: Ctx): void {
  * player as where the thing was found and a stale one is a lie about the room they are standing in.
  */
 function living({ b, m, at }: Ctx): void {
-  /*
-   * The four photographs, off the shelf and onto the east wall.
-   *
-   * x 8.825 is a facing measurement, not a wall measurement. LIVING.x1 is 9 and the plaster's inner face
-   * is 8.9, but this wall wears a damaged-wall panel hung 6 cm proud of that — front at 8.84, see
-   * ModelProps' PANEL_* constants — so a frame hung on the plaster would be buried in masonry. 8.825
-   * puts the 3 cm frame box's back exactly on 8.84 and its photograph 1.1 cm proud of the wood, which is
-   * the same relief the mantel versions had.
-   *
-   * Same four z positions and the same four sizes as on the shelf, so the clue text still reads left to
-   * right in the order it describes, and all four centred on one line at 1.5 — picture height, matching
-   * painting-sun.glb on the north wall — which leaves their tops uneven because the frames are four
-   * different heights. That is what four things hung by hand over forty years looks like.
-   */
-  const frames: Array<[number, number, number]> = [[5.12, 0.24, 0.3], [5.68, 0.22, 0.27], [6.32, 0.26, 0.32], [6.88, 0.2, 0.25]];
-  for (const [fz, fw, fh] of frames) frame(b, m, 8.825, 1.5, fz, fw, fh, 'x', -1);
+  // Retained for the user's later manual puzzle rewrite; only the four wall meshes are removed here.
   at['living.mantel'] = new Vector3(8.55, 1.5, 6.0);
 
   /*
@@ -524,16 +503,6 @@ function basement({ b, m, aabbs, at }: Ctx): void {
  * written underneath — is the last thing the player needs told to them.
  */
 function ritual({ b, m, at }: Ctx): void {
-  const A = PLACE.altar;
-
-  // Chalk. Two rings, the outer one gone over more than once.
-  b.ring(m.paper, 1.72, 1.79, 40, A.x, BASE_Y + 0.012, A.z);
-  b.ring(m.paper, 1.5, 1.53, 36, A.x, BASE_Y + 0.011, A.z);
-  for (let i = 0; i < 6; i++) {
-    const a = (i / 6) * Math.PI * 2 + 0.4;
-    candle(b, m, A.x + Math.cos(a) * 1.62, BASE_Y, A.z + Math.sin(a) * 1.62, 0.16 + (i % 3) * 0.04);
-  }
-
   /*
    * Her records, the whole of the west wall. Eleven columns, and a twelfth begun.
    *
@@ -563,24 +532,6 @@ function ritual({ b, m, at }: Ctx): void {
   b.box(m.iron, 0.03, 0.018, 0.018, -29.8, BASE_Y + 1.9, 4.6);
   b.box(m.paper, 0.006, 0.05, 0.22, -29.82, BASE_Y + 0.9, 4.6);
   at['ritual.records'] = new Vector3(-29.55, BASE_Y + 1.4, 2.3);
-
-  // The rite, pinned at eye height on the wall by the door — the last thing read, first obeyed. Same
-  // correction as the records wall, on the south run this time: z -1 is the wall, -0.84 is the facing's
-  // front, and the sheet was at -0.88 with its pin's face flush on -0.84. -0.82 and -0.80 restore it.
-  sheet(b, m, -25.4, BASE_Y + 1.52, -0.82, 0.36, 0.46, 'z');
-  b.box(m.iron, 0.02, 0.02, 0.02, -25.4, BASE_Y + 1.72, -0.8);
-  at['ritual.rite'] = new Vector3(-25.4, BASE_Y + 1.52, -0.6);
-
-  // The chair with straps on its arms that stood well back from the circle, at (-24.2, 4.3), was hand-built
-  // and has gone with the rest of that furniture. It published no anchor; its collider and contact quad
-  // went with it, and the rag and the hangings below are what still keep m.cloth in this file.
-
-  // A bowl and a cloth, both used. Nothing in this room has been cleaned, only rinsed.
-  b.cyl(m.dark, 0.2, 0.15, 0.14, 12, -28.9, BASE_Y + 0.07, 4.7);
-  b.box(m.cloth, 0.3, 0.03, 0.24, -28.6, BASE_Y + 0.015, 4.4, 0.6);
-  for (let i = 0; i < 5; i++) {
-    b.cyl(m.bone, 0.022, 0.026, 0.2 + i * 0.03, 5, -28.7 + i * 0.14, BASE_Y + 0.026, 1.1 + i * 0.09, 'x');
-  }
 
   // Cloth hung from the joists. It is the only thing in the house that moves in a draught.
   for (const [hx, hz, hh] of [[-29.0, 0.0, 1.1], [-23.2, 5.0, 0.9], [-28.4, 5.2, 1.3]] as Array<[number, number, number]>) {
