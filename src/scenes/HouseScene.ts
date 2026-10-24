@@ -33,6 +33,7 @@ import {
   type AnimationClip,
   type Scene,
 } from 'three';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import type { Engine } from '@/core/Engine';
 import { globalBus } from '@/core/EventBus';
 import type { AABB, FPController, FloorRect } from '@/player/FPController';
@@ -68,7 +69,6 @@ import {
   aabbOf,
   disposeGroup,
   makeAltar,
-  makeBreakerPanel,
   makeCasing,
   makeClock,
   makeFixtureMats,
@@ -79,12 +79,13 @@ import { GameState, KEY_NAME, KEY_OF, type KeyId } from '@/game/GameState';
 import { InteractionSystem } from '@/game/Interaction';
 import { ANISOTROPY_CAP, ModelLoader } from '@/world/ModelLoader';
 import { MODEL_PLACEMENTS, installModels } from '@/world/ModelProps';
-import { armDaayan } from '@/world/DaayanKnife';
+import { armDaayan, stampKillClipGrip } from '@/world/DaayanSword';
 import { armUpperDoor } from '@/world/UpperDoor';
 import { armInnerDoor } from '@/world/InnerDoor';
 import { armHiddenDoor } from '@/world/HiddenDoor';
 import { armRitualDoors, type RitualDoorsHandle } from '@/world/RitualDoors';
 import { DaayanAI, type HidingSpotRef } from '@/ai/DaayanAI';
+import { DaayanKill } from '@/ai/DaayanKill';
 import { armRitualCoffin, type CoffinHandles } from '@/world/Coffin';
 import { armAnimatedFurniture, type AnimatedFurnitureHandle } from '@/world/AnimatedFurniture';
 import { hingeMainGate } from '@/world/MainGate';
@@ -95,18 +96,16 @@ import { installFootsteps } from '@/audio/Footsteps';
 import { installCat } from '@/world/CatRoamer';
 import {
   ALTAR_DISPLAY,
-  BREAKER_ANSWER,
-  BREAKER_LABELS,
   CLOCK_HOURS,
   CLOCK_MINUTES,
   CLUES,
   RITUAL_ORDER,
 } from '@/game/Clues';
 import { Hud } from '@/ui/Hud';
+import { KillFx } from '@/ui/KillFx';
 import { NoiseSystem } from '@/game/NoiseSystem';
 import { OverlayLayer, overlayButton, overlayTitle } from '@/ui/OverlayLayer';
 import { showNote } from '@/ui/NoteOverlay';
-import { showSwitchPanel } from '@/ui/SwitchPanelOverlay';
 import { localize } from '@/ui/Strings';
 
 export interface HouseSceneHandles {
@@ -126,6 +125,8 @@ export interface HouseSceneHandles {
   closeOverlay: () => boolean;
   /** Hiding locks translation but deliberately leaves look and INTERACT live. */
   isHidden: () => boolean;
+  /** The catch cutscene owns movement, look and the camera for its 1.4 s. */
+  isCinematic: () => boolean;
   dispose: () => void;
 }
 
@@ -480,39 +481,6 @@ export function buildHouseScene(
   // --- Puzzle 2: the hour on the clock ---
   fixtures.add(makeClock(fx, PLACE.clock.x, PLACE.clock.y, PLACE.clock.z, 0, CLOCK_HOURS, CLOCK_MINUTES));
 
-  // --- Puzzle 3: the two that stay down ---
-  const panel = makeBreakerPanel(fx, PLACE.breaker.x, PLACE.breaker.y, PLACE.breaker.z);
-  fixtures.add(panel.group);
-  const rockers = [false, false, false, false];
-  interact.add({
-    id: 'panel.rockers',
-    pos: panel.anchor,
-    reach: 1.7,
-    label: () => (state.isSolved('breaker') ? null : 'Open the panel'),
-    onUse: () => {
-      showSwitchPanel(overlay, {
-        title: 'Sub-panel',
-        sub: 'Four breakers, and a main lever',
-        labels: BREAKER_LABELS,
-        initial: rockers,
-        onChange: (s) => {
-          for (let i = 0; i < rockers.length; i++) rockers[i] = s[i] === true;
-        },
-        onCommit: (s) => {
-          if (BREAKER_ANSWER.some((want, i) => (s[i] === true) !== want)) return false;
-          if (state.solve('breaker')) {
-            tween(0.9, (k) => {
-              panel.lid.rotation.x = k * 1.5;
-            });
-            placeKey('panel.key', panel.key, panel.keyAnchor, KEY_OF.breaker, 'A rusted key, behind the hatch.');
-            hud.showToast('A bolt shifts, further along the wall.', 3.4);
-          }
-          return true;
-        },
-      });
-    },
-  });
-
   // --- The screen over the ritual doorway ---
   // Only the flag lives here. The screen itself is doors-sliding.glb, so everything about it — the
   // blocker filling the opening, the prompt, and the mixer that plays its own eased slide — is built in
@@ -684,49 +652,7 @@ export function buildHouseScene(
     // spent must not spend another. `state.caught()` guards both, but bailing here too keeps the
     // overlay from being replaced under the player as they read the ending.
     if (ended || state.isDead()) return;
-
-    const alive = state.caught();
-    overlay.close();
-    hud.setPrompt(null);
-
-    // Back to the bed, and her back to the ritual room. Both are hard warps rather than a fade,
-    // because the catch has already played its own beat and a second one would read as a stutter.
-    // `warpTo` clears velocity itself, so there is no separate stop to make.
-    controller.warpTo(new Vector3(SPAWN.x, SPAWN.y, SPAWN.z), SPAWN.yaw);
-    ai.resetToStart();
-
-    if (!alive) {
-      ended = true;
-      overlay.show((content) => {
-        content.appendChild(
-          overlayTitle(localize('The house keeps you'), localize('There is nothing left to wake into.')),
-        );
-        const body = document.createElement('div');
-        body.style.cssText = 'font: italic 400 15px/1.75 Georgia, serif; color: #ddd2bd;';
-        const p = document.createElement('p');
-        p.style.cssText = 'margin: 0 0 1em;';
-        p.textContent = localize('Her hand closes on your wrist and the house goes quiet.');
-        body.appendChild(p);
-        content.appendChild(body);
-        content.appendChild(
-          overlayButton(
-            localize('Begin again'),
-            () => {
-              state.reset();
-              ended = false;
-              controller.warpTo(new Vector3(SPAWN.x, SPAWN.y, SPAWN.z), SPAWN.yaw);
-              ai.resetToStart();
-              overlay.close();
-              hud.showToast('You wake on a bed in the dark bedroom.', 4.0);
-            },
-            'width: 100%; margin-top: 8px;',
-          ),
-        );
-      });
-      return;
-    }
-
-    hud.showToast('You wake on the bed, and the house has shifted.', 4.0);
+    onCaught();
   });
 
   // --- Hand the world to the player ---
@@ -766,7 +692,7 @@ export function buildHouseScene(
    * nobody can see.
    */
   let daayanClips: readonly AnimationClip[] = [];
-  // The knife goes in on the placement hook rather than here, because it is measured in her bone
+  // The sword goes in on the placement hook rather than here, because it is measured in her bone
   // units and those only mean anything once her fit has written the root scale.
   const models = installModels(modelLoader, scene, engine.camera, aabbs, fx.shadow, house.mats.wallWarm.map, reportError, (name, root, clips) => {
     if (name === 'daayan.glb') {
@@ -806,15 +732,14 @@ export function buildHouseScene(
       });
     }
     if (name === 'hidden-door') {
-      // The leaf for the carved opening in the nook's west wall, and the red lock that holds it. Same
-      // hinge surgery as the other two doors; what is different is that this one is gated on the red
-      // key and carries the plate the player identifies it by. `onOpened` is the reveal's cue.
+      // The leaf for the carved opening in the nook's west wall. Same hinge surgery as the other two
+      // doors; what is different is that this one is gated on the red key. `onOpened` is the reveal's
+      // cue.
       armHiddenDoor(root, {
         aabbs,
         player: controller,
         interact,
         state,
-        mats: fx,
         tween,
         toast: (msg) => hud.showToast(msg, 4.0),
         onOpened: () => state.raiseTension('DISTURBING'),
@@ -1070,6 +995,119 @@ export function buildHouseScene(
     }
   });
 
+  // --- The catch cutscene ---
+  /**
+   * One grab, one sword hit, black. The clip is optional: if it is missing or has not loaded when a
+   * catch lands, the old instant respawn runs instead. That is deliberate — a missing optional asset
+   * must never leave the player standing in front of a frozen Daayan, and it must never let a catch
+   * cost a life with no consequence.
+   *
+   * `tryPrepareKill` is retried from the frame loop because the clip and her rig load independently.
+   * The fist pose is stamped after both exist; see `stampKillClipGrip` for why the clip cannot ship
+   * with its own right-hand finger tracks.
+   */
+  const killFx = new KillFx();
+  let killClip: AnimationClip | null = null;
+  let killClipReady = false;
+  let killDisposed = false;
+  let catchSequence: DaayanKill | null = null;
+
+  const showDeathCard = (): void => {
+    ended = true;
+    overlay.show((content) => {
+      content.appendChild(
+        overlayTitle(localize('The house keeps you'), localize('There is nothing left to wake into.')),
+      );
+      const body = document.createElement('div');
+      body.style.cssText = 'font: italic 400 15px/1.75 Georgia, serif; color: #ddd2bd;';
+      const p = document.createElement('p');
+      p.style.cssText = 'margin: 0 0 1em;';
+      p.textContent = localize('Her hand closes on your throat and the house goes quiet.');
+      body.appendChild(p);
+      content.appendChild(body);
+      content.appendChild(
+        overlayButton(
+          localize('Begin again'),
+          () => {
+            state.reset();
+            ended = false;
+            controller.warpTo(new Vector3(SPAWN.x, SPAWN.y, SPAWN.z), SPAWN.yaw);
+            ai.endKill();
+            ai.resetToStart();
+            held.setVisible(true);
+            touch.setPaused(false);
+            catchSequence?.reset();
+            overlay.close();
+            hud.showToast('You wake on a bed in the dark bedroom.', 4.0);
+          },
+          'width: 100%; margin-top: 8px;',
+        ),
+      );
+    });
+  };
+
+  const respawnAfterCatch = (): void => {
+    controller.warpTo(new Vector3(SPAWN.x, SPAWN.y, SPAWN.z), SPAWN.yaw);
+    ai.endKill();
+    ai.resetToStart();
+    held.setVisible(true);
+    touch.setPaused(false);
+    hud.showToast('You wake on the bed, and the house has shifted.', 4.0);
+  };
+
+  catchSequence = new DaayanKill({
+    player: controller,
+    ai,
+    hud,
+    camera: engine.camera,
+    fx: killFx,
+    onRespawn: respawnAfterCatch,
+    onDeath: showDeathCard,
+  });
+
+  function onCaught(): void {
+    if (ended || state.isDead()) return;
+    const alive = state.caught();
+    hud.setPrompt(null);
+    // A catch inside a hiding pocket would put the kill camera inside the furniture, so those keep
+    // the old instant consequence. So does a missing clip — the sequence refuses to start and the
+    // fallback spends the life exactly as the game has always done.
+    const started = !hiding.isHidden() && catchSequence !== null && catchSequence.start(alive);
+    if (started) {
+      held.setVisible(false);
+      touch.setPaused(true);
+      return;
+    }
+
+    held.setVisible(true);
+    touch.setPaused(false);
+    controller.warpTo(new Vector3(SPAWN.x, SPAWN.y, SPAWN.z), SPAWN.yaw);
+    ai.endKill();
+    ai.resetToStart();
+    if (!alive) showDeathCard();
+    else hud.showToast('You wake on the bed, and the house has shifted.', 4.0);
+  }
+
+  function tryPrepareKill(): void {
+    if (killDisposed || killClipReady || !killClip || !daayanRoot) return;
+    if (!stampKillClipGrip(killClip, daayanRoot)) return;
+    ai.setKillClip(killClip);
+    killClipReady = true;
+  }
+
+  new GLTFLoader()
+    .loadAsync('/assets/models/daayan-kill.glb')
+    .then((gltf) => {
+      const clip = gltf.animations[0];
+      if (!clip) return;
+      killClip = clip;
+      tryPrepareKill();
+    })
+    .catch((err) => {
+      // Optional asset: the instant catch path is the fallback, so this is a warning, not a red box.
+      console.warn('kill clip unavailable; catches will use the instant path', err);
+    });
+
   // --- Frame ---
   /**
    * Developer probe — extra handles on the existing `window.__daayan` object, in DEV builds only.
@@ -1115,6 +1153,17 @@ export function buildHouseScene(
       away: ai.getPosition().distanceTo(engine.camera.position),
     });
     /**
+     * Run the catch cutscene without waiting to be hunted. It spends a life exactly like a real
+     * catch, so it exercises the respawn and death paths too; `killReady` says whether the clip
+     * stamped onto her rig, and `killActive` is true for the 1.4 s the camera is locked.
+     */
+    handles.kill = () => onCaught();
+    handles.killReady = () => killClipReady;
+    handles.killActive = () => catchSequence?.isActive() ?? false;
+    // Staging handle: lets a probe put her on a known spot for the cutscene without waiting for a
+    // real hunt. DEV-only, like every other handle in this block.
+    handles.ai = ai;
+    /**
      * Take the red key without walking to it, so the hidden door can be tested end to end.
      *
      * The key lives under a pillow in the black magic room at the far end of the basement, and a door
@@ -1126,7 +1175,7 @@ export function buildHouseScene(
     /**
      * What the crosshair is actually on, as one pasteable line.
      *
-     * A screenshot cannot say what it is a picture of, and "the red square on the door" is not a thing
+     * A screenshot cannot say what it is a picture of, and "the lock on the door" is not a thing
      * the code has a name for. This raycasts from the camera and walks up to the nearest named
      * ancestor, which for an imported prop is the placement row's `id` — so it answers both "which
      * object is this" and "where in the world is it", which together are enough to place or remove
@@ -1178,6 +1227,13 @@ export function buildHouseScene(
      *
      *   __daayan.interactables()  -> { count, ids, current, nearest }
      */
+    /** Fire one interaction by id, for staging screenshots and cutscene tests. */
+    handles.use = (id: string) => {
+      const item = interact.get(id);
+      if (!item) return 'missing';
+      item.onUse();
+      return 'used';
+    };
     handles.interactables = () => {
       const cam = engine.camera;
       const dir = new Vector3();
@@ -1283,6 +1339,8 @@ export function buildHouseScene(
 
   const update = (dt: number): void => {
     clock += dt;
+    // The clip and the rig land in either order. One cheap guard per frame until both exist.
+    if (!killClipReady) tryPrepareKill();
 
     // Skinned models advance even behind an open overlay: the daayan's clip is a 17 s loop and
     // freezing it while the player reads a note would make her twitch on close.
@@ -1375,6 +1433,16 @@ export function buildHouseScene(
      */
     if (!overlay.isOpen()) ai.update(dt);
 
+    // The cutscene's clock, camera and black. It has to run after her mixer tick so the frame the
+    // camera lands on belongs to the pose the clip just produced, and before the prompt/escape code
+    // so a locked player cannot interact with the room they are being killed in.
+    catchSequence?.update(dt);
+    if (catchSequence?.isActive()) {
+      hud.setPrompt(null);
+      touch.setInteractionVerb('interact');
+      return;
+    }
+
     // The hunt's start, once the ritual door has finished sliding.
     if (wakeDaayanAt !== 0 && performance.now() / 1000 >= wakeDaayanAt) {
       wakeDaayanAt = 0;
@@ -1402,6 +1470,9 @@ export function buildHouseScene(
   };
 
   const dispose = (): void => {
+    killDisposed = true;
+    catchSequence?.dispose();
+    killFx.dispose();
     ai.dispose();
     interact.clear();
     hiding.dispose();
@@ -1442,6 +1513,7 @@ export function buildHouseScene(
       return true;
     },
     isHidden: () => hiding.isHidden(),
+    isCinematic: () => catchSequence?.isActive() ?? false,
     dispose,
   };
 }

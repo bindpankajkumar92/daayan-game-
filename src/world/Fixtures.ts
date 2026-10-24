@@ -429,59 +429,6 @@ export function makeGate(mats: FixtureMats, x: number, z: number): BuiltGate {
   return { group, bolts, lockAnchors };
 }
 
-export interface BuiltHiddenLock {
-  group: Group;
-  /** The red plate, returned so the unlock can swing it aside. */
-  plate: Mesh;
-  /** Where the interaction anchors, standing off the plate along the way it faces. */
-  anchor: Vector3;
-}
-
-/**
- * The red lock on the hidden door.
- *
- * One plate rather than the gate's three bolts, because the whole of what makes this read is that
- * there is exactly one of it and it is the only red thing in the house. It is also larger than the
- * gate's 0.3 x 0.26: those are seen across the hall with the porch light behind them, while this one is
- * seen from a metre away in a corridor with no window in it, and a lock nobody notices is not a lock.
- *
- * The iron frame behind the plate is not decoration. A flat saturated quad on a dark leaf reads as a
- * missing texture — which is exactly how the door was reported before this existed — so the red is
- * inset into something with an edge and a thickness, and that edge is what says "object".
- *
- * `yaw` is the direction the plate faces, so the anchor can be derived from it rather than stated
- * twice: the interaction has to stand in front of the lock, not inside the door.
- */
-export function makeHiddenLock(
-  mats: FixtureMats,
-  x: number,
-  y: number,
-  z: number,
-  yaw: number,
-): BuiltHiddenLock {
-  const group = new Group();
-
-  const frame = boxMesh(mats.iron, 0.44, 0.44, 0.055, 0, 0, -0.035);
-  group.add(frame);
-
-  const plate = boxMesh(mats.red, 0.34, 0.34, 0.075, 0, 0, 0.005);
-  group.add(plate);
-
-  // A hasp hanging under the plate, so the lock reads as fastened rather than as a sign.
-  const hasp = new Mesh(new TorusGeometry(0.07, 0.017, 5, 12, Math.PI), mats.iron);
-  hasp.position.set(0, -0.245, 0.02);
-  hasp.rotation.z = Math.PI;
-  group.add(hasp);
-
-  group.position.set(x, y, z);
-  group.rotation.y = yaw;
-  // Facing yaw maps +z to (sin, 0, cos), so the stand-off follows the same two numbers the group does.
-  const anchor = new Vector3(x + Math.sin(yaw) * 0.45, y, z + Math.cos(yaw) * 0.45);
-
-  mergeStaticChildren(group, [plate]);
-  return { group, plate, anchor };
-}
-
 export type SymbolKind = 'moon' | 'eye' | 'cross' | 'skull';
 
 /**

@@ -264,6 +264,13 @@ async function main(): Promise<void> {
         player.setCrouch(false);
         player.move(0, 0, dt);
         touch.consumeLookDelta();
+      } else if (scene.isCinematic()) {
+        // The catch cutscene drives the camera in scene.update. Movement is zero and look deltas are
+        // dropped: a drag during the grab must not fight the forced aim.
+        player.setRun(false);
+        player.setCrouch(false);
+        player.move(0, 0, dt);
+        touch.consumeLookDelta();
       } else if (scene.isHidden()) {
         // Hiding owns translation and eye height. Do not feed crouch here: setCrouch re-seats the eye
         // on the floor, which would pull it out of the under-bed/wardrobe pocket. Look stays live so

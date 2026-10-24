@@ -54,10 +54,19 @@ const CHECKS = [
   // The consequence of a catch, and that a respawn leaves her able to hunt again: the two things the
   // `game:caught` wiring has to get right, in either direction.
   ['caught', 'caught-check.ts'],
+  // The catch cutscene: the clip must bind to the shipped rig before its timing is worth testing.
+  ['kill-clip', 'kill-clip-check.mjs'],
+  ['kill', 'kill-check.ts'],
   // Scene-content regressions found in play: the ritual coffin must not auto-open, and its screen
   // must keep offering a way to close after it has been slid open.
   ['ritual-cleanup', 'ritual-cleanup-check.ts'],
   ['ritual-doors', 'ritual-doors-check.ts'],
+  ['wall-props', 'wall-props-check.ts'],
+  // The upper flat's imported shell takes the wall texture at install, before the scan has loaded;
+  // this pins the in-place adoption that keeps those walls off the procedural canvas.
+  ['upper-shell-walls', 'upper-shell-walls-check.ts'],
+  // The hidden door's leaf must swing, not vanish, and the south cheek that swallowed it is gone.
+  ['hidden-door', 'hidden-door-check.ts'],
   // Last: it is the slowest (several 90-240 s scripted sessions), and it is the suite that guards the
   // specific faults found in play rather than the spec's general properties.
   ['playtest', 'playtest-check.ts'],

@@ -236,6 +236,12 @@ export interface HeldLanternHandles {
    * skipping it for long enough leaves the pendulum to catch up over the next half second.
    */
   update: (dt: number, on: boolean) => void;
+  /**
+   * Hide the viewmodel for a camera-locked beat. The lantern's lights stay where they are: this is
+   * the player's own light, and putting it out would darken the room around the kill, not just remove
+   * the arm from the shot.
+   */
+  setVisible: (on: boolean) => void;
   dispose: () => void;
 }
 
@@ -521,6 +527,10 @@ export function installHeldLantern(
   });
 
   return {
+    setVisible: (on) => {
+      swing.visible = on;
+      arms.visible = on;
+    },
     update: (dt, on) => {
       const h = Math.min(Math.max(dt, 1e-4), DT_MAX);
       clock += h;

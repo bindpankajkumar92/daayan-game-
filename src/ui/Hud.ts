@@ -56,6 +56,7 @@ export class Hud {
       position: fixed; inset: 0; pointer-events: none; z-index: ${Z};
       font: 500 13px/1.4 ui-monospace, monospace; color: #e8e2d8;
       text-shadow: 0 1px 3px rgba(0,0,0,0.95);
+      transition: opacity 0.12s linear;
     `;
     document.body.appendChild(this.root);
 
@@ -169,6 +170,14 @@ export class Hud {
    * it empties makes the player re-count from scratch every time, which is the opposite of what a
    * glanceable risk indicator is for.
    */
+  /**
+   * Hide the HUD for a camera-locked beat. The prompt and lives are meaningless while the player is
+   * not in control, and leaving them over a kill close-up breaks the shot.
+   */
+  setCinematic(on: boolean): void {
+    this.root.style.opacity = on ? '0' : '1';
+  }
+
   setLives(remaining: number): void {
     for (let i = 0; i < this.lifePips.length; i++) {
       const lit = i < remaining;

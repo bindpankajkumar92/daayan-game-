@@ -429,6 +429,27 @@ function roofGeometry(floor: Rect, top: number): BufferGeometry {
   return geo;
 }
 
+/**
+ * Move the photographed wall scan onto the live wall texture, in place.
+ *
+ * The map cannot simply be swapped onto the wall materials: room-upper.glb's sealed shell is dressed
+ * at model-install time with whatever Texture wallWarm held then, and the scan is still in flight at
+ * that point. Updating the texture object itself is what lets the shell follow when the image lands;
+ * assigning the materials a new map leaves it on the procedural canvas, with clamp wrapping, forever.
+ *
+ * The UV pitch is unaffected: the scan and the procedural tile are both sampled through the
+ * world-space UVs already written, so both take WALL_TILE_U/V happily.
+ */
+export function adoptWallScan(target: Texture, loaded: Texture, anisotropy: number): Texture {
+  target.image = loaded.image;
+  target.colorSpace = loaded.colorSpace;
+  target.wrapS = loaded.wrapS;
+  target.wrapT = loaded.wrapT;
+  target.anisotropy = anisotropy;
+  target.needsUpdate = true;
+  return target;
+}
+
 export function buildHouse(anisotropy: number): BuiltHouse {
   const disposables: Array<{ dispose: () => void }> = [];
   const track = <T extends { dispose: () => void }>(x: T): T => {
@@ -576,9 +597,9 @@ export function buildHouse(anisotropy: number): BuiltHouse {
       tex.colorSpace = SRGBColorSpace;
       tex.wrapS = MirroredRepeatWrapping;
       tex.wrapT = MirroredRepeatWrapping;
-      pick(tex);
+      adoptWallScan(texWallWarm, tex, anisotropy);
       for (const m of [mats.wallWarm, mats.wallCool]) {
-        m.map = tex;
+        m.map = texWallWarm;
         m.needsUpdate = true;
       }
     },

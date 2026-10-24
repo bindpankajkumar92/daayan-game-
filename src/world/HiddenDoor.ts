@@ -1,22 +1,20 @@
 /**
- * HiddenDoor — the red-locked leaf in the nook's west wall.
+ * HiddenDoor — the locked leaf in the nook's west wall.
  *
  * The player found this door, not the other way round: they stood in the nook and looked west, and what
  * they were looking at was a plank panel with a red square on it. That panel is painted into
  * `room-upper.glb`'s own texture — a scene-wide scan finds no red material anywhere, and hiding the
  * model takes the square with it — so there was never a prop to make interactive. The doorway is a
- * CarveBox through the model's triangles, and the red square comes back as a real object: a red plate
- * on the leaf, built by `makeHiddenLock`.
+ * CarveBox through the model's triangles. The painted square goes with the carve and nothing is
+ * rebuilt in its place; the interaction still stands off the leaf where the square used to be.
  *
  * Three things this has to get right.
  *
  * - **It is locked until the red key is held.** The prompt is the whole of the feedback: "Locked"
  *   before, "Turn the red key" after. There is no rattle-and-fail, because a lock that rattles has told
  *   you it is a lock, and this one is meant to be the thing the player went looking for.
- * - **The plate is on the leaf, not the jamb.** The gate's locks hold its leaf to the jamb and never
- *   move; this is a padlock on a door, so it swings away with the door it is fastened to. The lock is
- *   built in world space and then `attach`ed to the pivot, which preserves its transform and makes it a
- *   child of the swing.
+ * - **The leaf swings into the stairwell.** The hinge is on the south jamb, so a positive turn carries
+ *   the leaf west, away from the nook and into the room it opens onto.
  * - **The pivot has to stay under the root.** ModelProps hides the whole upper storey by the root's
  *   `visible` flag when the player is downstairs (minEyeY), and a pivot parented beside the root would
  *   leave a leaf hanging in mid-air over the hall. Being under it means inheriting the placement yaw,
@@ -28,7 +26,7 @@ import { UP_HIDDEN_DOOR, UP_Y } from '@/world/HouseRooms';
 import type { AABB, FPController } from '@/player/FPController';
 import type { GameState } from '@/game/GameState';
 import type { InteractionSystem } from '@/game/Interaction';
-import { aabbOf, makeHiddenLock, trackLeaf, type FixtureMats } from '@/world/Fixtures';
+import { aabbOf, trackLeaf } from '@/world/Fixtures';
 
 /** How far it swings. Past 90 so the leaf stands clear of the opening rather than half across it. */
 const OPEN_ANGLE = (100 * Math.PI) / 180;
@@ -63,8 +61,6 @@ export interface HiddenDoorDeps {
   interact: InteractionSystem;
   /** Reads the red key and records the door as open. */
   state: GameState;
-  /** The shared fixture materials, for the lock's iron and its one saturated red. */
-  mats: FixtureMats;
   tween: (dur: number, apply: (k: number) => void) => void;
   toast: (msg: string) => void;
   /** Fired once, when the leaf has actually started to move — the reveal's cue. */
@@ -73,7 +69,7 @@ export interface HiddenDoorDeps {
 }
 
 /**
- * Hinge `root`'s leaf, build its red lock, and hold the doorway shut until the red key turns.
+ * Hinge `root`'s leaf and hold the doorway shut until the red key turns.
  *
  * Called from the placement hook, which is the first moment the fit's scale and yaw are on the root and
  * so the first moment the leaf's world box means anything.
@@ -118,11 +114,10 @@ export function armHiddenDoor(root: Object3D, deps: HiddenDoorDeps): void {
   );
   deps.aabbs.push(block);
 
-  // The red lock, on the face the player arrives at. That is the *east* face — the nook side — which is
-  // the opposite of where the hinge is and the opposite of where the room is, and getting it the wrong
-  // way round puts the whole lock behind the leaf where nobody will ever see it.
-  const lock = makeHiddenLock(deps.mats, UP_HIDDEN_DOOR.x + 0.17, UP_Y + 1.15, UP_HIDDEN_DOOR.z, Math.PI / 2);
-  pivot.attach(lock.group);
+  // The interaction stands where the lock was, on the east face — the nook side, the face the player
+  // arrives at. Nothing is drawn there now; 0.62 is the old plate's stand-off, kept so the prompt still
+  // appears at the same reach along the leaf.
+  const lockAnchor = new Vector3(UP_HIDDEN_DOOR.x + 0.62, UP_Y + 1.15, UP_HIDDEN_DOOR.z);
 
   // The leaf's own keep-out, over the leaf parts only — a keep-out measured round a frame would seal
   // the opening it stands in. See leafBoxes for the measurements.
@@ -139,7 +134,7 @@ export function armHiddenDoor(root: Object3D, deps: HiddenDoorDeps): void {
 
   deps.interact.add({
     id: 'upper.hidden-door',
-    pos: lock.anchor,
+    pos: lockAnchor,
     reach: 2.2,
     label: () => {
       if (busy || open) return null;
@@ -156,12 +151,6 @@ export function armHiddenDoor(root: Object3D, deps: HiddenDoorDeps): void {
       if (!deps.state.openHidden(UNLOCKED_FOR_TESTING)) return;
       busy = true;
       open = true;
-
-      // The plate swings aside on the leaf, and the bolt drops out of the way with it.
-      const plate = lock.plate;
-      deps.tween(0.4, (k) => {
-        plate.rotation.z = -k * 1.1;
-      });
 
       // Dropped below the world rather than removed: FPController ignores boxes that end under the
       // player's feet, and the array is shared.

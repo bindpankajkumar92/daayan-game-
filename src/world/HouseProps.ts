@@ -101,17 +101,6 @@ function sheet(b: Batch, m: FixtureMats, x: number, y: number, z: number, w: num
   else b.box(m.paper, 0.008, h, w, x, y, z);
 }
 
-/** A framed picture on a wall. `nx` is which way it faces along the wall's normal axis. */
-function frame(b: Batch, m: FixtureMats, x: number, y: number, z: number, w: number, h: number, axis: 'x' | 'z', nx: -1 | 1): void {
-  if (axis === 'x') {
-    b.box(m.wood, 0.03, h, w, x, y, z);
-    b.box(m.paper, 0.012, h - 0.06, w - 0.06, x + nx * 0.02, y, z);
-  } else {
-    b.box(m.wood, w, h, 0.03, x, y, z);
-    b.box(m.paper, w - 0.06, h - 0.06, 0.012, x, y, z + nx * 0.02);
-  }
-}
-
 type Ctx = {
   b: Batch;
   m: FixtureMats;
@@ -128,7 +117,7 @@ type Ctx = {
  * to — which means it must stay legible in the dark and must not hide anything. Two clues, both
  * at eye height on the way in.
  */
-function hall({ b, m, at }: Ctx): void {
+function hall({ b, m }: Ctx): void {
   // The runner that lay here is gone with the other two — see living() for the one note covering all
   // three. What stays is the boot scuffs worn into the boards in front of the gate: not cloth, and the
   // only thing in this room that says eleven people walked in.
@@ -150,10 +139,6 @@ function hall({ b, m, at }: Ctx): void {
    * standable band starts at -6.58, so the closest the player can stand is already effectively on it —
    * shifting it 4 cm would change nothing a player can feel.
    */
-  sheet(b, m, 1.9, 1.45, -6.82, 0.3, 0.4, 'z');
-  b.box(m.iron, 0.02, 0.02, 0.02, 1.9, 1.62, -6.8);
-  at['hall.notice'] = new Vector3(1.9, 1.45, -6.6);
-
   /*
    * No coat rail, no coat, no side table and no stick stand. The rail with its four brass pegs and the one
    * good coat on them stood on the east wall at x 4.81; the side table with its dead oil lamp at (-4.6, -3.0)
@@ -165,13 +150,6 @@ function hall({ b, m, at }: Ctx): void {
    * hall.photo's `sub` in Clues.ts, which used the pegs as its landmark.
    */
 
-  // The photograph, moved off the plaster and onto the facing for the third time on this wall: 4.825 puts
-  // the 3 cm frame box's back exactly on the panel front at 4.84 and its print 4.1 cm proud of the stone,
-  // which is the construction living()'s four frames use against their own east facing at 8.825. At 4.87
-  // the wood spanned 4.855..4.885 and the print 4.844..4.856, both of them behind it. The anchor stays at
-  // 4.58, which is the innermost x the player can stand at anyway.
-  frame(b, m, 4.825, 1.68, -3.6, 0.5, 0.62, 'x', -1);
-  at['hall.photo'] = new Vector3(4.58, 1.68, -3.6);
 }
 
 // --- Hallway ---------------------------------------------------------------------------------
@@ -393,33 +371,6 @@ function shaft({ b, m }: Ctx): void {
  * geometry and a mark on the floor.
  */
 function basement({ b, m, aabbs, at }: Ctx): void {
-  const P = PLACE.breaker;
-
-  // The diagram, nailed to the wall an arm's length from the panel. Its z moves with the panel's, and
-  // for the same reason: the facing's front is at -1.84, and a 8 mm sheet at -1.88 was a sheet of paper
-  // inside a wall. -1.82 hangs it 2 cm in front of the masonry, as it always was.
-  sheet(b, m, -20.62, P.y - 0.05, -1.82, 0.44, 0.54, 'z');
-  for (const dx of [-0.18, 0.18]) b.box(m.iron, 0.018, 0.018, 0.018, -20.62 + dx, P.y + 0.19, -1.79);
-  at['basement.diagram'] = new Vector3(-20.62, P.y - 0.05, -1.6);
-
-  /*
-   * The note about the draught, pinned to the wall the workbench stood against.
-   *
-   * It lay on that bench weighted under a jar, and the bench, its six jars and its tool were hand-built
-   * and have gone with the rest of the procedural furniture. Pinned rather than dropped on the boards,
-   * because a note on the floor of an unlit cellar is a note nobody finds; and pinned the way hall.notice
-   * and living.list are, with the diagram's own facing arithmetic: the facing fronts at -1.84, so 8 mm of
-   * paper at -1.82 clears it by 1.6 cm and the pin's 2 cm cube at -1.80 stands proud of the paper's face.
-   *
-   * x -16.4 is the bench's old centre, which leaves 1.8 m of bare wall between the note and the hatch at
-   * -18.55, and y is the panel's own height, so the four things on this wall — diagram, panel, hatch and
-   * note — read along one line from the doorway. Its anchor stands 0.22 m into the room, as the diagram's
-   * does. Clues.ts's title and `sub` for it were reworded to match: there is no jar and no bench.
-   */
-  sheet(b, m, -16.4, P.y, -1.82, 0.26, 0.3, 'z');
-  b.box(m.iron, 0.02, 0.02, 0.02, -16.4, P.y + 0.115, -1.8);
-  at['basement.draught'] = new Vector3(-16.4, P.y, -1.6);
-
   /*
    * The tally, cut into the wall beside the door at the height of someone sitting down. Ten groups of
    * five in two rows, then the fifty-first mark on its own.

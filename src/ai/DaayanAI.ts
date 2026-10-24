@@ -17,7 +17,7 @@
  */
 
 import type { Object3D } from 'three';
-import { AnimationMixer, Vector3 } from 'three';
+import { AnimationMixer, LoopOnce, Vector3 } from 'three';
 import { globalBus } from '@/core/EventBus';
 import type { AABB } from '@/player/FPController';
 import type { Vec3 } from '@/core/types';
@@ -138,6 +138,14 @@ export class DaayanAI {
   private root: Object3D | null = null;
   private mixer: AnimationMixer | null = null;
   private clipAction: import('three').AnimationAction | null = null;
+  /**
+   * The dedicated catch animation. Its own action on the same mixer, so it can crossfade from the
+   * walk without a second mixer fighting over the same bones.
+   */
+  private killAction: import('three').AnimationAction | null = null;
+  private killClip: import('three').AnimationClip | null = null;
+  /** While true, the AI does nothing but advance the mixer; the sequence owns camera and timing. */
+  private killing = false;
 
   /** Shared context object, rewritten each tick rather than reallocated. */
   private readonly ctx: AIContext;
@@ -418,6 +426,15 @@ export class DaayanAI {
    * governs whether the *first* noise wakes her, which is the scene's business via `canRoam`.
    */
   resetToStart(): void {
+    // A reset can land while the kill clip is still clamped (begin-again on the death card). Stop it
+    // here as well as in endKill: resetToStart must leave her in the walk whatever called it.
+    this.killing = false;
+    this.killAction?.stop();
+    if (this.clipAction) {
+      this.clipAction.reset();
+      this.clipAction.setEffectiveWeight(1);
+      this.clipAction.play();
+    }
     this.loco.place(
       v(this.deps.start.position.x, this.deps.start.position.y, this.deps.start.position.z),
       this.deps.start.yaw,
@@ -450,6 +467,82 @@ export class DaayanAI {
     // `force` rather than `request`: every state must yield, including STUNNED, which otherwise
     // refuses every candidate while its own timer runs.
     this.fsm.force('RETURN_TO_PATROL', this.ctx, 'recovered');
+  }
+
+  /**
+   * Give her the catch animation. Safe to call before the model lands: the clip is stored and the
+   * action is built as soon as the mixer exists.
+   */
+  setKillClip(clip: import('three').AnimationClip): void {
+    this.killClip = clip;
+    this.ensureKillAction();
+  }
+
+  hasKillClip(): boolean {
+    return this.killAction !== null;
+  }
+
+  isKilling(): boolean {
+    return this.killing;
+  }
+
+  /**
+   * Freeze the hunt and start the kill clip with her body at `anchor`, facing `yaw`.
+   *
+   * This is deliberately not a state in the FSM. The sequence may warp or fade while she plays, and
+   * none of that is a decision she should be making; the FSM would only have to be taught to ignore
+   * its own timers for 1.4 s. A flag that short-circuits `update` after the mixer tick is smaller and
+   * cannot be interrupted by a new sighting.
+   */
+  beginKill(anchor: { x: number; y: number; z: number }, yaw: number): boolean {
+    if (!this.root || !this.mixer || !this.clipAction) return false;
+    this.ensureKillAction();
+    if (!this.killAction) return false;
+
+    this.killing = true;
+    this.attackerLatched = true;
+    this.catchRecoveryUntil = this.now + this.cfg.catchRecovery;
+    this.loco.place(v(anchor.x, anchor.y, anchor.z), yaw);
+    this.path = [];
+    this.pathIndex = 0;
+    this.pathTarget = null;
+    this.pathFailed = false;
+
+    this.root.position.set(anchor.x, anchor.y, anchor.z);
+    this.root.rotation.y = yaw;
+
+    this.clipAction.fadeOut(0.1);
+    this.killAction.reset();
+    this.killAction.setEffectiveWeight(1);
+    this.killAction.fadeIn(0.1);
+    this.killAction.play();
+    return true;
+  }
+
+  /** Hand her body back to the walk after a kill. The caller still owns where she goes next. */
+  endKill(): void {
+    if (!this.killing) return;
+    this.killing = false;
+    this.killAction?.fadeOut(0.2);
+    if (this.clipAction) {
+      this.clipAction.reset();
+      this.clipAction.setEffectiveWeight(1);
+      this.clipAction.fadeIn(0.2);
+      this.clipAction.play();
+    }
+  }
+
+  private ensureKillAction(): void {
+    if (this.killAction || !this.killClip || !this.mixer) return;
+    const action = this.mixer.clipAction(this.killClip);
+    action.setLoop(LoopOnce, 1);
+    action.clampWhenFinished = true;
+    action.enabled = true;
+    // The authored impact is at 0.95 s of clip time. Half speed puts it at 1.9 s, so the grab,
+    // raise and swing read as a deliberate 2-second kill rather than a blink. KILL_TIMING in
+    // DaayanKill matches these two numbers.
+    action.timeScale = 0.5;
+    this.killAction = action;
   }
 
   /** Her current state name, for the HUD and the debug overlay. */
@@ -552,6 +645,12 @@ export class DaayanAI {
    */
   update(dt: number): void {
     if (!this.cfg.enabled || this.disposed) return;
+    if (this.killing) {
+      // No perception, no FSM, no navigation. The clip runs on real time, unlike `syncModel`'s
+      // fixed-step walk advance, because a one-shot kill must finish in 1.2 s of wall time.
+      this.mixer?.update(Math.min(Math.max(dt, 0), 0.1));
+      return;
+    }
     // Clamp dt so a hitch (a texture upload, a tab regaining focus) cannot teleport her. 0.1 s is six
     // frames at 60 Hz and about as much as a body could plausibly have moved in one unnoticed step.
     dt = Math.min(dt, 0.1);
@@ -987,6 +1086,7 @@ export class DaayanAI {
         this.clipAction = this.mixer.clipAction(clip);
         this.clipAction.play();
       }
+      this.ensureKillAction();
     }
     if (!this.mixer || !this.clipAction) return;
 
@@ -1054,6 +1154,7 @@ export class DaayanAI {
     this.disposed = true;
     for (const u of this.unsubs) u();
     this.unsubs.length = 0;
+    this.killAction?.stop();
     this.mixer?.stopAllAction();
     this.debug?.dispose();
   }

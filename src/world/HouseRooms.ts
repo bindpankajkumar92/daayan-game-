@@ -285,8 +285,8 @@ export const UP_SHRINE_DOOR = { x: 16.5, z: UP_STORE.z0, half: 0.7, top: UP_Y + 
  * looked west, and the wall they were looking at is the `collideOnly` run at x 18.61, z −2.0 .. 0.6.
  * What reads as a plank door with a red square on it there is not a prop — it is painted into
  * `room-upper.glb`'s own texture (a scene-wide scan finds no red material anywhere, and hiding the
- * model removes it). So opening it means carving the panel, and the red square has to come back as a
- * real object on the leaf. See `makeHiddenLock`.
+ * model removes it). So opening it means carving the panel, and the painted square goes with the
+ * carve; nothing is rebuilt in its place.
  *
  * z −0.46 is the player's own line of sight, so the opening lands exactly where they were pointing.
  * `top` is 2.05 rather than the house's usual 2.1 for the reason `UPPER_INNER` is 2.2: this is a carve

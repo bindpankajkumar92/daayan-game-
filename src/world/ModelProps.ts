@@ -28,7 +28,7 @@ import type { AABB } from '@/player/FPController';
 import { aabbOf, leafBoxes } from '@/world/Fixtures';
 import { fitToBox, fitToHeight, playClip, type ModelLoader } from '@/world/ModelLoader';
 import { carveBoxes, type CarveBox } from '@/world/CarveBox';
-import { WALL_TILE, worldUv } from '@/world/HouseBuilder';
+import { WALL_TILE_U, WALL_TILE_V, worldUv } from '@/world/HouseBuilder';
 import { SHADOW_LIFT, SHADOW_SPREAD, shadowUnitQuad } from '@/world/ContactShadow';
 
 export interface ModelPlacement {
@@ -1104,7 +1104,7 @@ export const MODEL_PLACEMENTS: ModelPlacement[] = [
   // the quad has bare floorboards under all of it, and the grounding has to come from somewhere — a
   // 0.75 x 0.65 table on an empty floor with four thin legs and no contact shadow floats.
   { name: 'table.glb', height: 0.75, x: 7.6, z: 5.4, collide: true, shadow: 1 },
-  // knife.glb is not here: the daayan holds it. See DaayanKnife, and note that a row here would
+  // The sword is not here: the daayan holds it. See DaayanSword, and note that a row here would
   // fight the hand attachment for the cached Group exactly as a lantern row would fight HeldLantern.
   // North wall, west of the window. Turned for the same reason as the other painting; this one is
   // double-sided, so hung unturned it showed the wood backing of the canvas.
@@ -1570,11 +1570,11 @@ export const MODEL_PLACEMENTS: ModelPlacement[] = [
   // Far corner, turned toward the altar rather than toward the door: the player should find her
   // already occupied, not waiting for them. 1.85 rather than a human 1.7 so she reads as taller than
   // the player the moment she is seen; the ritual room's ceiling is 2.8 above BASE_Y, and her
-  // footprint at this height stays clear of the west wall at x = -30. The knife in her hand is
-  // measured in her own bone units, so it grows with her — see DaayanKnife.
+  // footprint at this height stays clear of the west wall at x = -30. The sword in her hand is
+  // measured in her own bone units, so it grows with her — see DaayanSword.
   //
   // 0.45 on the shadow, the smallest fraction in the file, because her box is the widest overstatement
-  // of a contact area here: it is her silhouette with both arms out and a knife held away from her body,
+  // of a contact area here: it is her silhouette with both arms out and a sword held away from her body,
   // and at 1 that is a 1.2 m puddle around a figure standing on two feet. At 0.45 it is a patch a little
   // wider than her stance, which is what a lantern two metres away actually casts.
   { name: 'daayan.glb', height: 1.85, x: -28.4, y: BASE_Y, z: 4.3, yaw: 2.41, clip: 0, speed: 0.6, shadow: 0.45 },
@@ -2313,8 +2313,8 @@ function curveAlbedo(root: Object3D, g: number, seal: boolean, gain = 1, lift = 
 }
 
 /**
- * Give the sealed shell the plaster the rest of the storey wears, tiled from where it stands in the
- * world.
+ * Give the sealed shell the same wall scan the rest of the storey wears, tiled from where it stands
+ * in the world.
  *
  * This is the fix for the last of the reported "view glitches" upstairs, and the only one of the four
  * that was never a renderer artefact. Measured on the device: the shell is 276.3 m2 of vertical wall
@@ -2323,12 +2323,13 @@ function curveAlbedo(root: Object3D, g: number, seal: boolean, gain = 1, lift = 
  * the procedural walls brick-patched plaster and skirting, which is why this is the thing the player
  * ended up pointing at: it did not get worse, everything beside it got better.
  *
- * Wearing HouseBuilder's own wallWarm map at WALL_TILE, through the same world-space UV convention, is
- * what makes the seam disappear rather than merely be textured on both sides: a procedural wall and the
- * .glb's wall that meet at a corner sample the same texel at the same point in the world, so the
- * pattern runs straight through the join. Sharing the Texture and not the Material keeps the shell on
- * the imported rung of the depth ladder — see HouseBuilder's bias() — so which surface wins a coplanar
- * tie does not change, and it costs neither a draw call nor a second 1024 canvas.
+ * Wearing HouseBuilder's own wallWarm map at the same WALL_TILE_U/V through the same world-space UV
+ * convention is what makes the seam disappear rather than merely be textured on both sides: a
+ * procedural wall and the .glb's wall that meet at a corner sample the same texel at the same point in
+ * the world, so the pattern runs straight through the join. Sharing the Texture and not the Material
+ * keeps the shell on the imported rung of the depth ladder — see HouseBuilder's bias() — so which
+ * surface wins a coplanar tie does not change, and it costs neither a draw call nor a second 1024
+ * canvas.
  *
  * Must run after `group.add(root)`, for the reason wallColliders documents: the UV is computed from the
  * world position and before the add there is no world. The vertices stay where the fit put them —
@@ -2356,7 +2357,7 @@ function dressShell(root: Object3D, wallMap: Texture | null): number {
     if (!mesh.geometry.getAttribute('normal')) return;
     if (mesh.geometry.userData['worldUv'] !== true) {
       mesh.geometry.userData['worldUv'] = true;
-      worldUv(mesh.geometry, WALL_TILE, mesh.matrixWorld);
+      worldUv(mesh.geometry, WALL_TILE_U, WALL_TILE_V, mesh.matrixWorld);
       dressed++;
     }
     for (const m of sealed) {

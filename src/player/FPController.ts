@@ -176,6 +176,11 @@ export class FPController {
     this.syncCamera();
   }
 
+  /** Current look direction, for a caller that needs to ease from where the player is looking. */
+  getFacing(): { yaw: number; pitch: number } {
+    return { yaw: this.facing.y, pitch: this.facing.x };
+  }
+
   addLookDelta(dYaw: number, dPitch: number): void {
     this.facing.y -= dYaw;
     this.facing.x = MathUtils.clamp(this.facing.x - dPitch, -Math.PI / 2 + 0.01, Math.PI / 2 - 0.01);
