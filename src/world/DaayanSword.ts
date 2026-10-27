@@ -72,19 +72,49 @@ const SWORD_GRIP_Y = 0.25;
 const SWORD_ROLL_DEG = -90;
 
 /**
- * Handle centre in the hand bone's frame. x is one handle half-thickness palmar of the palm skin, so the
- * grip sits against the palm instead of floating off it; y sits it across the distal half of the palm,
- * just proximal of the knuckles; z centres the handle across the fist.
+ * The sword does not sit on its own y axis, so the holder cannot be placed by turning +y onto the palm.
+ * Measured from the file's own vertices, in the model's local frame:
+ *
+ *   - the pommel's centre is (0.135, 0.13, -0.16),
+ *   - the guard's centre is (0.22, 0.48, -0.07),
+ *   - so the handle runs on that line, ~20 deg off the file's +y and a centimetre or two to one side of
+ *     it. Seating the y axis in the palm, which is what the numbers here used to do, therefore left the
+ *     real handle outside the fingers — the sword hung beside the fist with the guard at her fingertips.
+ *
+ * The fist's grip channel is the ring through each curled finger's three joints: circumcentre per
+ * column, mean centre (-2.06, 6.85, 0.86) in the hand bone's frame, axis along the palm's z. The holder
+ * below is the transform that carries the measured pommel-to-guard line onto that channel, so the
+ * handle cross-section runs through the middle of the closed fingers — measured on the live rig, the
+ * handle sits 1.7–2.3 bone units off every finger joint, which is the fist's own radius.
+ *
+ * Which end of it she holds is the rotation's job, not this one's — see GRIP_ROT.
+ *
+ * Re-solve it with the same two landmarks if the sword asset or the fist pose ever changes.
  */
-const GRIP_POS = { x: -2.15, y: 5.45, z: 6.8 };
+const GRIP_POS = { x: 3.385, y: -0.012, z: -5.208 };
 
 /**
- * The handle's length onto the hand's z, i.e. across the palm rather than out along the fingers, which
- * is what a hammer grip does and what lets the fingers close over it. It maps the blade's local +x
- * (after the blade pivot turns +y onto +x) to the hand's +z — Rz(-90) then Ry(-90), XYZ Euler
- * (-90, 0, -90).
+ * Rotation of the holder: Rz(-90) then Ry(-90) (which is what turns the blade's length onto the palm's
+ * z), plus the measured 20 deg the handle line leans away from the file's +y, and the half turn that
+ * decides *which end* of the sword leaves the fist.
+ *
+ * That half turn is the whole difference between a sword and a knife held point-down. Measured on the
+ * live rig, the first solve had the pommel 12.6 cm past the index side of the fist and the tip 70 cm
+ * past the little-finger side: the blade hung out of the bottom of the closed hand, down her thigh and
+ * through her leg. That is an icepick grip, not a sword grip, and it read as upside down from every
+ * angle — the two screenshots the grip was reported against show exactly that. A sword is held the
+ * other way round: the pommel presses into the little-finger side of the palm and the blade leaves past
+ * the index finger.
+ *
+ * So the sword was turned end for end about a pivot on the handle line — the point of that line closest
+ * to the fist's grip channel — which leaves the line itself exactly where it was: the fingers close on
+ * the same handle, the guard still sits just past them, only the blade now leaves upward instead of
+ * hanging down. All twelve finger joints stay on the handle (checked again after the turn: the handle
+ * sits 1.7–2.3 bone units off each joint, the same radius as the fist's own ring).
+ *
+ * Numbers below are the holder quaternion that turn produced, read back as XYZ Euler.
  */
-const GRIP_ROT = { x: -90, y: 0, z: -90 };
+const GRIP_ROT = { x: -76.73, y: -2.12, z: 77.03 };
 
 /**
  * Pronation of the right forearm. The authored knife-grip pose points the blade out to the side; +90

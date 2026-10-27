@@ -18,6 +18,7 @@ export class OverlayLayer {
   private closeBtn: HTMLButtonElement;
   private onClosed: (() => void) | null = null;
   private open = false;
+  private dismissible = true;
 
   constructor() {
     this.root = document.createElement('div');
@@ -71,7 +72,7 @@ export class OverlayLayer {
     // Tapping the dark surround closes too — the fastest gesture on a phone, and the card's own
     // pointerdown stops the event so a tap inside never counts as "outside".
     this.root.addEventListener('pointerdown', (e) => {
-      if (e.target === this.root) this.close();
+      if (this.dismissible && e.target === this.root) this.close();
     });
     this.card.addEventListener('pointerdown', (e) => e.stopPropagation());
     document.addEventListener('keydown', this.onKeyDown);
@@ -83,9 +84,14 @@ export class OverlayLayer {
 
   /**
    * Replace the card's contents and show it. `build` receives an empty content element; the
-   * close button is preserved.
+   * close button is preserved. `dismissible: false` is for terminal cards: the run is over and
+   * there is no game state to return to behind them.
    */
-  show(build: (content: HTMLDivElement) => void, onClosed?: () => void): void {
+  show(
+    build: (content: HTMLDivElement) => void,
+    onClosed?: () => void,
+    options?: { dismissible?: boolean },
+  ): void {
     this.card.textContent = '';
     this.card.appendChild(this.closeBtn);
     const content = document.createElement('div');
@@ -93,6 +99,8 @@ export class OverlayLayer {
     this.card.appendChild(content);
     build(content);
     this.onClosed = onClosed ?? null;
+    this.dismissible = options?.dismissible ?? true;
+    this.closeBtn.style.display = this.dismissible ? '' : 'none';
     this.root.style.display = 'grid';
     this.open = true;
   }
@@ -116,7 +124,7 @@ export class OverlayLayer {
   }
 
   private onKeyDown = (e: KeyboardEvent): void => {
-    if (!this.open) return;
+    if (!this.open || !this.dismissible) return;
     if (e.key === 'Escape') {
       e.preventDefault();
       this.close();

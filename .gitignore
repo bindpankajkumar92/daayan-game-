@@ -51,6 +51,8 @@ glb files/
 .models-backup-0.8/
 audio files/
 device-shot.png
+intro-clips/
+cut scene , image , graphics works/
 
 # Scratch: one-off asset-inspection scripts and the images they dump. Dot-prefixed by hand so they
 # sort out of the way; several also import `sharp`, which is not a dependency, so they would not run
@@ -86,5 +88,7 @@ tools/*.png
 /device-*.png
 /fist_look_*.png
 /tmp-*.png
+/tmp_*.png
+/scratch/
 # One-off scratch scripts at the repo root.
 /tmp-*.mjs

@@ -38,7 +38,7 @@ import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js
 import type { AABB, FloorRect } from '@/player/FPController';
 import { makeCeilingBoards, makePlaster, makeWoodFloor, makeWoodPanel } from './ProcTextures';
 import { expandRun, segmentBox, WALL_T, type Box, type Rect, type Segment } from './HouseLayout';
-import { ROOMS, UPPER_PATCH, houseFloors, subtractRect } from './HouseRooms';
+import { HID_STAIR_WELL, ROOMS, UPPER_PATCH, houseFloors, subtractRect } from './HouseRooms';
 
 /**
  * World size one texture repeat covers. Wall plaster at 2.4 m ≈ 210 px/m from a 512 px map.
@@ -783,6 +783,18 @@ export function buildHouse(anisotropy: number): BuiltHouse {
     group.add(ceil);
     slabs.push({ ...r, y: UPPER_PATCH.ceilY, mat: ceil.material as Material, kind: 'ceil' });
   }
+
+  // Ceiling over the hidden stairwell opening at the upper flat's ceiling height.
+  const swW = HID_STAIR_WELL.x1 - HID_STAIR_WELL.x0;
+  const swD = HID_STAIR_WELL.z1 - HID_STAIR_WELL.z0;
+  const swCeilGeo = track(slabPlane(swW, swD));
+  anchorUv(swCeilGeo, swW / CEIL_TILE_X, swD / CEIL_TILE_Z, HID_STAIR_WELL.x0 / CEIL_TILE_X, HID_STAIR_WELL.z0 / CEIL_TILE_Z);
+  const swCeil = new Mesh(swCeilGeo, mats.ceil);
+  swCeil.rotation.x = Math.PI / 2;
+  swCeil.position.set((HID_STAIR_WELL.x0 + HID_STAIR_WELL.x1) / 2, UPPER_PATCH.ceilY, (HID_STAIR_WELL.z0 + HID_STAIR_WELL.z1) / 2);
+  swCeil.name = 'upper-stairwell-ceil';
+  group.add(swCeil);
+  slabs.push({ x0: HID_STAIR_WELL.x0, x1: HID_STAIR_WELL.x1, z0: HID_STAIR_WELL.z0, z1: HID_STAIR_WELL.z1, y: UPPER_PATCH.ceilY, mat: swCeil.material as Material, kind: 'ceil' });
 
   /**
    * Close the slots. See findRisers: this is the 60 mm one across the upper flat's back doorway and the

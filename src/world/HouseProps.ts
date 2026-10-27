@@ -117,11 +117,10 @@ type Ctx = {
  * to — which means it must stay legible in the dark and must not hide anything. Two clues, both
  * at eye height on the way in.
  */
-function hall({ b, m }: Ctx): void {
+function hall(_ctx: Ctx): void {
   // The runner that lay here is gone with the other two — see living() for the one note covering all
-  // three. What stays is the boot scuffs worn into the boards in front of the gate: not cloth, and the
-  // only thing in this room that says eleven people walked in.
-  b.ring(m.dark, 0.9, 1.35, 14, 0, 0.013, -6.0, Math.PI * 0.15, Math.PI * 0.7);
+  // three. The boot scuffs that were worn into the boards in front of the gate (a dark floor arc) have
+  // been removed too, on request: it read as a black hole in the floor rather than as wear.
 
   /*
    * The pinned notice, beside the gate at the height of a face — and 4 cm further into the room than it

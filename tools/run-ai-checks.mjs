@@ -57,6 +57,7 @@ const CHECKS = [
   // The catch cutscene: the clip must bind to the shipped rig before its timing is worth testing.
   ['kill-clip', 'kill-clip-check.mjs'],
   ['kill', 'kill-check.ts'],
+  ['coffin-burn', 'coffin-burn-check.ts'],
   // Scene-content regressions found in play: the ritual coffin must not auto-open, and its screen
   // must keep offering a way to close after it has been slid open.
   ['ritual-cleanup', 'ritual-cleanup-check.ts'],

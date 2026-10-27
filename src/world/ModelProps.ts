@@ -645,6 +645,9 @@ const UP_HIDDEN_WALL_PANELS: ModelPlacement[] = roomWallPanels('up-hidden', { mi
  * `UP_HIDDEN_Y` as floorY is what keeps the facings running from the room's own floor — where the flight
  * and the room are — up to the top of the parapet.
  */
+/** The imported flat's ceiling, 2.89 above its floor — see the `upper` room's `height`. */
+const UPPER_CEIL = UP_Y + 2.89;
+
 const UP_HIDDEN_STAIRWELL_PANELS: ModelPlacement[] = [
   // North lip, inward toward +z: the face the player sees across the well from the entry room.
   ...wallPanels(
@@ -657,6 +660,24 @@ const UP_HIDDEN_STAIRWELL_PANELS: ModelPlacement[] = [
     UP_Y + 0.45,
     { minEyeY: 0 },
   ),
+  // West head wall, inward toward +x: the face the player sees looking down the stairwell.
+  {
+    name: 'wall-damaged.glb',
+    id: 'up-hidden-head-west',
+    clone: true,
+    height: UPPER_CEIL - UP_Y,
+    fit: {
+      width: (HID_STAIR_WELL.z1 + HALF_T) - (HID_STAIR_WELL.z0 - HALF_T),
+      height: UPPER_CEIL - UP_Y,
+      depth: PANEL_DEPTH,
+    },
+    x: HID_STAIR_WELL.x0 + HALF_T + PANEL_FACE_LIFT,
+    y: UP_Y + PANEL_Y_REVEAL,
+    z: (HID_STAIR_WELL.z0 + HID_STAIR_WELL.z1) / 2,
+    yaw: Math.PI / 2,
+    albedo: 1.6,
+    minEyeY: 0,
+  },
 ];
 
 /**
@@ -680,12 +701,24 @@ const UP_HIDDEN_STAIRWELL_PANELS: ModelPlacement[] = [
  * a hole in the panel rather than being faced over.
  */
 const NOOK = { x0: 18.4, x1: 21.3, z0: -0.99, z1: 0.49 };
-/** The imported flat's ceiling, 2.89 above its floor — see the `upper` room's `height`. */
-const UPPER_CEIL = UP_Y + 2.89;
 
 const NOOK_WALL_PANELS: ModelPlacement[] = [
-  // South run, inward toward +z (the nook).
-  ...wallPanels('nook-wall-south', { x1: NOOK.x0, z1: NOOK.z0, x2: NOOK.x1, z2: NOOK.z0 }, 0, 1, 0, UP_Y, UPPER_CEIL),
+  // South run, inward toward +z, with opening for hidden door swing so the leaf does not hide in the wall.
+  ...wallPanels(
+    'nook-wall-south',
+    {
+      x1: NOOK.x0,
+      z1: NOOK.z0,
+      x2: NOOK.x1,
+      z2: NOOK.z0,
+      openings: [{ at: 19.15, half: 0.75, y1: UP_HIDDEN_DOOR.top }],
+    },
+    0,
+    1,
+    0,
+    UP_Y,
+    UPPER_CEIL,
+  ),
   // North run, inward toward -z. It carries the opening through to the corridor behind.
   ...wallPanels(
     'nook-wall-north',

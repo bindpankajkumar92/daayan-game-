@@ -11,6 +11,7 @@
  */
 
 import {
+  Box3,
   BoxGeometry,
   CylinderGeometry,
   Group,
@@ -388,8 +389,12 @@ export function makeCasing(mats: FixtureMats, s: CasingSpec): Group {
 
 export interface BuiltGate {
   group: Group;
-  /** One per lock, in the order the keys are declared. Slide these to show a lock has turned. */
-  bolts: Mesh[];
+  /**
+   * One per lock, in the order the keys are declared. Each is a pivot standing on the staple the
+   * padlock hangs from, so swinging it about z swings the padlock off its hasp. Empty until
+   * hangGatePadlocks() fills it, which happens when lock-and-key.glb arrives.
+   */
+  bolts: Object3D[];
   /** Where the prompt for each lock should be picked up from. */
   lockAnchors: Vector3[];
 }
@@ -409,24 +414,65 @@ export interface BuiltGate {
 export function makeGate(mats: FixtureMats, x: number, z: number): BuiltGate {
   const group = new Group();
 
-  const bolts: Mesh[] = [];
+  const bolts: Object3D[] = [];
   const lockAnchors: Vector3[] = [];
   for (const ly of [0.62, 1.34, 2.06]) {
-    group.add(boxMesh(mats.iron, 0.3, 0.26, 0.07, x, ly, z + 0.06));
-    const bolt = new Mesh(new BoxGeometry(0.42, 0.075, 0.06), mats.brass);
-    bolt.position.set(x, ly, z + 0.11);
-    group.add(bolt);
-    bolts.push(bolt);
-    // Padlock hasp, so a locked lock reads as locked from across the hall.
-    const hasp = new Mesh(new TorusGeometry(0.055, 0.014, 5, 10, Math.PI), mats.iron);
-    hasp.position.set(x, ly + 0.13, z + 0.11);
-    group.add(hasp);
+    // The padlock itself is lock-and-key.glb, hung on this pivot by hangGatePadlocks(). The pivot sits
+    // at the top of where the shackle will be, so a swing reads as the lock coming off its staple.
+    const pivot = new Group();
+    pivot.position.set(x, ly + PADLOCK_H / 2, z + 0.06);
+    group.add(pivot);
+    bolts.push(pivot);
+    // The staple the shackle goes through, so a locked lock reads as hung rather than floating.
+    group.add(boxMesh(mats.iron, 0.07, 0.05, 0.03, x, ly + PADLOCK_H / 2 + 0.01, z + 0.05));
     lockAnchors.push(new Vector3(x, ly, z + 0.4));
   }
 
-  // The brass bolts slide independently when their keys turn; plates and hasps do not.
+  // The pivots move independently when their keys turn; the staples do not.
   mergeStaticChildren(group, bolts);
   return { group, bolts, lockAnchors };
+}
+
+/** Height of one gate padlock in metres. Big enough to read from the spawn point at lantern range. */
+export const PADLOCK_H = 0.26;
+
+/**
+ * Hang a copy of the loaded padlock model on each gate pivot.
+ *
+ * The model is measured rather than trusted: lock-and-key.glb arrives at 0.21 x 0.38 x 0.05 m, but
+ * nothing else in this game takes a file's units on faith. clone(true) shares geometry and materials,
+ * so three locks cost one lock's worth of GPU memory. `albedo` multiplies the base colour once, for a
+ * map authored for a lit scene that Lambert would otherwise return dark.
+ */
+export function hangGatePadlocks(model: Object3D, pivots: readonly Object3D[], albedo = 1): void {
+  if (albedo !== 1) {
+    const seen = new Set<Material>();
+    model.traverse((o) => {
+      const mesh = o as Mesh;
+      if (!mesh.isMesh) return;
+      for (const m of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) {
+        const c = (m as MeshLambertMaterial).color;
+        if (c === undefined || seen.has(m)) continue;
+        seen.add(m);
+        c.multiplyScalar(albedo);
+      }
+    });
+  }
+  model.updateWorldMatrix(false, true);
+  const box = new Box3().setFromObject(model);
+  const size = box.getSize(new Vector3());
+  const centre = box.getCenter(new Vector3());
+  const k = size.y > 1e-6 ? PADLOCK_H / size.y : 1;
+  for (const pivot of pivots) {
+    const copy = model.clone(true);
+    copy.scale.multiplyScalar(k);
+    copy.position.copy(centre).multiplyScalar(-k);
+    // Pivot is at the shackle's top; the body hangs below it.
+    const holder = new Group();
+    holder.position.y = -PADLOCK_H / 2;
+    holder.add(copy);
+    pivot.add(holder);
+  }
 }
 
 export type SymbolKind = 'moon' | 'eye' | 'cross' | 'skull';

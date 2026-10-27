@@ -73,11 +73,12 @@ import {
   makeClock,
   makeFixtureMats,
   makeGate,
+  hangGatePadlocks,
   type SymbolKind,
 } from '@/world/Fixtures';
 import { GameState, KEY_NAME, KEY_OF, type KeyId } from '@/game/GameState';
 import { InteractionSystem } from '@/game/Interaction';
-import { ANISOTROPY_CAP, ModelLoader } from '@/world/ModelLoader';
+import { ANISOTROPY_CAP, fitToHeight, ModelLoader } from '@/world/ModelLoader';
 import { MODEL_PLACEMENTS, installModels } from '@/world/ModelProps';
 import { armDaayan, stampKillClipGrip } from '@/world/DaayanSword';
 import { armUpperDoor } from '@/world/UpperDoor';
@@ -86,6 +87,8 @@ import { armHiddenDoor } from '@/world/HiddenDoor';
 import { armRitualDoors, type RitualDoorsHandle } from '@/world/RitualDoors';
 import { DaayanAI, type HidingSpotRef } from '@/ai/DaayanAI';
 import { DaayanKill } from '@/ai/DaayanKill';
+import { CoffinBurn } from '@/story/CoffinBurn';
+import { CoffinFire } from '@/effects/CoffinFire';
 import { armRitualCoffin, type CoffinHandles } from '@/world/Coffin';
 import { armAnimatedFurniture, type AnimatedFurnitureHandle } from '@/world/AnimatedFurniture';
 import { hingeMainGate } from '@/world/MainGate';
@@ -218,6 +221,9 @@ export function buildHouseScene(
   lantern.position.set(-0.205, -0.16, -0.30);
   engine.camera.add(lantern);
   scene.add(engine.camera);
+  // The burn takes the lantern out of the player's hand. The per-frame flame write below must not
+  // switch it back on for the rest of the run.
+  let lanternOut = false;
   // Moon through the two windows. A directional light is free and it is the only thing that tells
   // the player which way is outside.
   const moon = new DirectionalLight(0x8fb0ff, 0.5);
@@ -390,7 +396,7 @@ export function buildHouseScene(
     tween(2.6, (k) => {
       swingGate?.(k);
     });
-    hud.showToast('Three turns. The gate gives.', 4.0);
+    hud.showToast('The gate gives.', 4.0);
   };
 
   gate.lockAnchors.forEach((anchor, i) => {
@@ -407,16 +413,21 @@ export function buildHouseScene(
       },
       onUse: () => {
         if (!state.openLock(k)) return;
-        // Physical feedback, per §7: the bolt slides clear and stays that way.
-        const from = bolt.position.x;
+        // Physical feedback, per §7: the padlock comes off its staple and hangs open, and stays that way.
+        const fromY = bolt.position.y;
         tween(0.55, (p) => {
-          bolt.position.x = from + p * 0.3;
-          bolt.rotation.z = p * 0.35;
+          bolt.position.y = fromY - p * 0.04;
+          bolt.rotation.z = p * 0.5;
         });
         hud.setKeyUsed(k);
         const left = state.locksRemaining();
-        hud.showToast(left === 0 ? 'The last bolt draws back.' : `${left} more.`, 2.8);
-        if (state.gateUnlocked()) openGate();
+        if (left === 0) {
+          // The three locks are finished, but the gate does not give yet: the son in the coffin is
+          // the last thing holding it. The player has to go back for the lantern throw.
+          hud.showToast('The last bolt draws back. The gate holds.', 4.0);
+        } else {
+          hud.showToast(`${left} more.`, 2.8);
+        }
       },
     });
   });
@@ -431,6 +442,9 @@ export function buildHouseScene(
    */
   let coffinLid: CoffinHandles | null = null;
   let coffinOpenRequested = false;
+  let sonSkeleton: Object3D | null = null;
+  let sonBurned = false;
+  let burnSequence: CoffinBurn | null = null;
   let hiddenWardrobe: AnimatedFurnitureHandle | null = null;
   const animatedFurnitures: AnimatedFurnitureHandle[] = [];
   const altar = makeAltar(fx, PLACE.altar.x, PLACE.altar.z, BASE_Y, ALTAR_DISPLAY);
@@ -446,6 +460,24 @@ export function buildHouseScene(
       coffinOpenRequested = true;
       coffinLid?.open();
       hud.showToast('The lid of the coffin swings open.', 3.4);
+    },
+  });
+  /**
+   * The final task only appears once every bolt is back. The gate is held, so the player returns to
+   * the open coffin with the lantern; the throw is the end of the run, which is why losing the light
+   * is safe here. The label stays null until then, so the ordinary coffin visit cannot spend it.
+   */
+  interact.add({
+    id: 'coffin.burn',
+    pos: new Vector3(PLACE.altar.x, BASE_Y + 0.35, PLACE.altar.z),
+    reach: 2.4,
+    label: () =>
+      !sonBurned && state.gateUnlocked() && coffinOpenRequested && !burnSequence?.isActive()
+        ? 'Throw the lantern'
+        : null,
+    onUse: () => {
+      if (sonBurned || !state.gateUnlocked() || !coffinOpenRequested) return;
+      if (burnSequence?.start()) hud.setPrompt(null);
     },
   });
   let seq: SymbolKind[] = [];
@@ -673,6 +705,11 @@ export function buildHouseScene(
   // Started after setAabbs on purpose: these load over several frames and push their colliders into
   // the array the controller is already holding, so the house is walkable before any of them land.
   const modelLoader = new ModelLoader(aniso);
+  // The three gate padlocks. makeGate() left a pivot per lock; the model lands a few frames later.
+  void modelLoader
+    .load('lock-and-key.glb')
+    .then(({ root }) => hangGatePadlocks(root, gate.bolts, 2.0))
+    .catch((e: unknown) => reportError(e instanceof Error ? e : new Error(String(e)), 'gate-padlocks'));
   /**
    * The noise props' arm, which needs the audio listener that is not built until below. Declared here
    * and assigned there rather than leaned on by hoisting: the arms in this hook already read `audio`
@@ -695,6 +732,9 @@ export function buildHouseScene(
   // The sword goes in on the placement hook rather than here, because it is measured in her bone
   // units and those only mean anything once her fit has written the root scale.
   const models = installModels(modelLoader, scene, engine.camera, aabbs, fx.shadow, house.mats.wallWarm.map, reportError, (name, root, clips) => {
+    // The son in the coffin. The other skeleton in the house is a different placement and must stay
+    // untouched; this name is the one laid in the coffin.
+    if (name === 'skeleton.glb') sonSkeleton = root;
     if (name === 'daayan.glb') {
       daayanRoot = root;
       daayanClips = clips;
@@ -1108,6 +1148,100 @@ export function buildHouseScene(
       console.warn('kill clip unavailable; catches will use the instant path', err);
     });
 
+  // --- The coffin burn ---
+  /**
+   * The last task before the gate. The three locks are already back, the gate is held, and the player
+   * has returned to the open coffin with the lantern. The sequence is in-engine because the room,
+   * coffin, skeleton and lantern are all here; only the fire is new.
+   *
+   * The lantern prop is loaded from the same `lantern.glb` the viewmodel uses. It is optional: if it
+   * has not landed, the fire still ignites on schedule, because the beat must never depend on a
+   * cosmetic prop.
+   */
+  const burnFx = new KillFx('burn-fx');
+  const burnFire = new CoffinFire(scene, () => sonSkeleton);
+  let burnPropRoot: Object3D | null = null;
+  let burnDisposed = false;
+  const burnProp = {
+    show: () => {
+      if (burnPropRoot) burnPropRoot.visible = true;
+    },
+    hide: () => {
+      if (burnPropRoot) burnPropRoot.visible = false;
+    },
+    place: (x: number, y: number, z: number, spin: number) => {
+      if (!burnPropRoot) return;
+      burnPropRoot.position.set(x, y, z);
+      // Tumble about the base as well as yaw; a lantern crossing the coffin upright reads as a prop
+      // being slid into place rather than thrown.
+      burnPropRoot.rotation.set(spin * 0.55, spin, spin * 0.35);
+    },
+  };
+  void modelLoader
+    .load('lantern.glb')
+    .then(({ root }) => {
+      if (burnDisposed) return;
+      const prop = root.clone(true);
+      fitToHeight(prop, 0.34, 0, 0, 0);
+      prop.visible = false;
+      scene.add(prop);
+      burnPropRoot = prop;
+    })
+    .catch((err) => {
+      // The fire and the beat still work without the flying prop; do not red-box the finale.
+      console.warn('coffin burn lantern prop unavailable', err);
+    });
+
+  const finishBurn = (): void => {
+    if (ended) return;
+    sonBurned = true;
+    openGate();
+    ended = true;
+    state.escape();
+    hud.setPrompt(null);
+    overlay.show((content) => {
+      content.appendChild(overlayTitle(localize('The son is ash'), localize('The hold breaks.')));
+      const body = document.createElement('div');
+      body.style.cssText = 'font: italic 400 15px/1.75 Georgia, serif; color: #ddd2bd;';
+      const p = document.createElement('p');
+      p.style.cssText = 'margin: 0 0 1em;';
+      p.textContent = localize('Somewhere above, the gate swings open. The road is waiting.');
+      body.appendChild(p);
+      content.appendChild(body);
+      content.appendChild(
+        overlayButton(
+          localize('Begin again'),
+          () => window.location.reload(),
+          'width: 100%; margin-top: 8px;',
+        ),
+      );
+    }, undefined, { dismissible: false });
+  };
+
+  burnSequence = new CoffinBurn({
+    player: controller,
+    hud,
+    touch,
+    held,
+    camera: engine.camera,
+    fx: burnFx,
+    fire: burnFire,
+    prop: burnProp,
+    getTarget: () => {
+      const target = new Vector3();
+      if (sonSkeleton) sonSkeleton.getWorldPosition(target);
+      else target.set(PLACE.altar.x, BASE_Y + 0.05, PLACE.altar.z);
+      // The skeleton lies flat: its root is the body, not a standing chest. Keep the fire on the
+      // bones; the cinematic raises its own look point.
+      target.y += 0.05;
+      return target;
+    },
+    onIgnite: () => {
+      lanternOut = true;
+    },
+    onFinish: finishBurn,
+  });
+
   // --- Frame ---
   /**
    * Developer probe — extra handles on the existing `window.__daayan` object, in DEV builds only.
@@ -1160,6 +1294,23 @@ export function buildHouseScene(
     handles.kill = () => onCaught();
     handles.killReady = () => killClipReady;
     handles.killActive = () => catchSequence?.isActive() ?? false;
+    /**
+     * Stage the final burn without solving the whole house. This bypasses the trigger, not the beat:
+     * it opens the coffin if needed, then starts the same sequence the interaction starts.
+     */
+    handles.burn = () => {
+      if (!coffinOpenRequested) {
+        coffinOpenRequested = true;
+        coffinLid?.open();
+      }
+      return burnSequence?.start() ?? false;
+    };
+    handles.burnReady = () => ({
+      gateUnlocked: state.gateUnlocked(),
+      coffinOpen: coffinOpenRequested,
+      sonBurned,
+      active: burnSequence?.isActive() ?? false,
+    });
     // Staging handle: lets a probe put her on a known spot for the cutscene without waiting for a
     // real hunt. DEV-only, like every other handle in this block.
     handles.ai = ai;
@@ -1369,7 +1520,7 @@ export function buildHouseScene(
     // Two out-of-phase sines: one fast enough to read as flame, one slow enough to read as
     // draught. There is no longer an "off" branch here — see LANTERN_LIT.
     const flame = 3.0 + Math.sin(clock * 11.3) * 0.22 + Math.sin(clock * 4.1) * 0.14;
-    lantern.intensity = flame;
+    lantern.intensity = lanternOut ? 0 : flame;
     // The arm carrying it. Cosmetic sway only, and it rides the same clock as the flame.
     held.update(dt, LANTERN_LIT);
 
@@ -1431,13 +1582,16 @@ export function buildHouseScene(
      * not be a chance to be crept up on, and §27's whole scheduling design assumes she is not the
      * thing costing frames while the player is stationary.
      */
-    if (!overlay.isOpen()) ai.update(dt);
+    // The burn freezes her too. The player is standing over the coffin; a catch landing during the
+    // ignition would only replace the finale with a respawn.
+    if (!overlay.isOpen() && !burnSequence?.isActive()) ai.update(dt);
 
-    // The cutscene's clock, camera and black. It has to run after her mixer tick so the frame the
-    // camera lands on belongs to the pose the clip just produced, and before the prompt/escape code
-    // so a locked player cannot interact with the room they are being killed in.
+    // The cutscenes' clocks, cameras and black. They run after her mixer tick so the frame the camera
+    // lands on belongs to the pose just produced, and before the prompt/escape code so a locked
+    // player cannot interact with the room while a beat owns the camera.
     catchSequence?.update(dt);
-    if (catchSequence?.isActive()) {
+    burnSequence?.update(dt);
+    if (catchSequence?.isActive() || burnSequence?.isActive()) {
       hud.setPrompt(null);
       touch.setInteractionVerb('interact');
       return;
@@ -1471,8 +1625,16 @@ export function buildHouseScene(
 
   const dispose = (): void => {
     killDisposed = true;
+    burnDisposed = true;
     catchSequence?.dispose();
+    burnSequence?.dispose();
     killFx.dispose();
+    burnFx.dispose();
+    burnFire.dispose();
+    if (burnPropRoot) {
+      scene.remove(burnPropRoot);
+      burnPropRoot = null;
+    }
     ai.dispose();
     interact.clear();
     hiding.dispose();
@@ -1513,7 +1675,7 @@ export function buildHouseScene(
       return true;
     },
     isHidden: () => hiding.isHidden(),
-    isCinematic: () => catchSequence?.isActive() ?? false,
+    isCinematic: () => (catchSequence?.isActive() ?? false) || (burnSequence?.isActive() ?? false),
     dispose,
   };
 }

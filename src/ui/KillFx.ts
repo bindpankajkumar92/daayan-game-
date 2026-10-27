@@ -21,7 +21,7 @@ export class KillFx {
   private blackRate = Infinity;
   private redValue = 0;
 
-  constructor() {
+  constructor(rootId = 'kill-fx') {
     this.style = document.createElement('style');
     this.style.textContent = `
       body.kill-cinematic #crosshair { opacity: 0 !important; }
@@ -29,7 +29,7 @@ export class KillFx {
     document.head.appendChild(this.style);
 
     this.root = document.createElement('div');
-    this.root.id = 'kill-fx';
+    this.root.id = rootId;
     this.root.style.cssText = `
       position: fixed; inset: 0; z-index: ${Z}; pointer-events: none;
       display: none; background: #000; opacity: 0;

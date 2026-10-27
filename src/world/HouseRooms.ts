@@ -1060,11 +1060,7 @@ export const ROOMS: RoomSpec[] = [
       { x1: UPPER.x0, z1: 3.3, x2: UPPER.x0, z2: 9.4, collideOnly: true },
       { x1: UPPER.x0, z1: UPPER.z1, x2: UPPER.x1, z2: UPPER.z1, collideOnly: true },
       { x1: UPPER.x1, z1: 0.3, x2: UPPER.x1, z2: 9.4, collideOnly: true },
-      // Starts at the well's east edge, not 18.4: with segmentBox's end padding 18.4 put the box's west
-      // end at 18.30, over the top two treads, and a climb south of the centre line was held there the
-      // same way the run above used to hold it. `+ HALF_T` lands the padded end exactly on 18.61, still
-      // overlapping the nook's west wall so the corner has no slot.
-      { x1: HID_STAIR_WELL.x1 + HALF_T, z1: -0.99, x2: 21.3, z2: -0.99, collideOnly: true },
+
       // The nook's west wall, now carrying the hidden door's opening. `collideOnly` still — the model
       // draws the panel, and `openings` on a collideOnly run cuts the collider exactly as it cuts the
       // cross wall below, which is the precedent this follows.

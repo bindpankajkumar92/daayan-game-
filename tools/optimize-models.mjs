@@ -295,6 +295,8 @@ const PLAN = {
   'antique_table.glb': { out: 'table-antique.glb' },
   // High-poly antique iron key model.
   'key.glb': { out: 'key-iron.glb', ratio: 0.35, error: 0.01 },
+  // Padlock for the main gate's three locks. Replaces the procedural plate + brass bolt + hasp.
+  'lock_and_key02.glb': { out: 'lock-and-key.glb', ratio: 0.5, error: 0.005 },
 };
 
 /** Triangles across every primitive, so the reduction is reported rather than assumed. */
