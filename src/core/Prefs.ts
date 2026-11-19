@@ -24,6 +24,8 @@ export interface Prefs {
   sens: number;
   /** UI language tag. Validated by Strings; see the note above on why this is not `Lang`. */
   lang: string;
+  /** True once the intro cutscene has been watched through or skipped. Absent = first launch. */
+  introSeen: boolean;
 }
 
 /**

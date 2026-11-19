@@ -73,6 +73,11 @@ export interface RitualDoorsDeps {
   onError: (err: unknown, where: string) => void;
   /** Raise the tension and let the cat through. Owned by HouseScene, which owns both. */
   onOpen: () => void;
+  /**
+   * False while the digital lock beside the screen is still shut. The player's own slide refuses
+   * until then; `open()` from the noise path is not gated (a maxed bar breaks the seal from inside).
+   */
+  canOpen?: () => boolean;
 }
 
 export interface RitualDoorsHandle {
@@ -193,9 +198,13 @@ export function armRitualDoors(
     // the wall behind it.
     pos: new Vector3(-21.6, RITUAL_DOOR.bottom + 1.1, RITUAL_DOOR.z),
     reach: 2.0,
-    label: () => (open ? 'Slide the screen shut' : 'Slide the screen aside'),
+    label: () => {
+      if (open) return 'Slide the screen shut';
+      return (deps.canOpen?.() ?? true) ? 'Slide the screen aside' : 'The screen is locked';
+    },
     onUse: () => {
       if (open) closeScreen('The screen slides shut.');
+      else if (!(deps.canOpen?.() ?? true)) deps.toast('A digital lock beside it holds it shut.');
       else openScreen('Cold air. There is a doorway behind it.');
     },
   });

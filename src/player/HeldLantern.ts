@@ -242,6 +242,13 @@ export interface HeldLanternHandles {
    * the arm from the shot.
    */
   setVisible: (on: boolean) => void;
+  /**
+   * Show or hide the lantern alone, keeping the fist. After the burn the lantern is gone but the same
+   * hand stays on screen holding the phone, so this is separate from `setVisible`.
+   */
+  setLanternShown: (on: boolean) => void;
+  /** The fist's group, in camera space with no rotation of its own: what a held item parents to. */
+  hand: Object3D;
   dispose: () => void;
 }
 
@@ -526,10 +533,22 @@ export function installHeldLantern(
     bob.v -= STEP_KICK.bob;
   });
 
+  let shown = true;
+  let lanternShown = true;
+  const applyVisible = (): void => {
+    swing.visible = shown && lanternShown;
+    arms.visible = shown;
+  };
+
   return {
+    hand: arms,
     setVisible: (on) => {
-      swing.visible = on;
-      arms.visible = on;
+      shown = on;
+      applyVisible();
+    },
+    setLanternShown: (on) => {
+      lanternShown = on;
+      applyVisible();
     },
     update: (dt, on) => {
       const h = Math.min(Math.max(dt, 1e-4), DT_MAX);

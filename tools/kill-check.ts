@@ -160,7 +160,10 @@ function step(kill: DaayanKill, seconds: number): void {
   check('no hit before its time', h.fx.flashes === 0);
   step(h.kill, KILL_TIMING.HIT - 0.5 + 0.02);
   check('hit flashes once', h.fx.flashes === 1, `${h.fx.flashes}`);
-  check('hit starts the black', h.fx.black !== null && h.fx.black.value === 1);
+  // The blood must be seen before the black closes over it.
+  check('the black waits for the blood', h.fx.black === null);
+  step(h.kill, KILL_TIMING.BLACK - KILL_TIMING.HIT);
+  check('the black starts after the hold', h.fx.black !== null && h.fx.black.value === 1);
 }
 
 // --- Alive finish -----------------------------------------------------------

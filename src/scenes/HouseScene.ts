@@ -21,6 +21,7 @@
 
 import {
   AmbientLight,
+  Box3,
   Color,
   DirectionalLight,
   FogExp2,
@@ -70,13 +71,11 @@ import {
   disposeGroup,
   makeAltar,
   makeCasing,
-  makeClock,
   makeFixtureMats,
   makeGate,
   hangGatePadlocks,
-  type SymbolKind,
 } from '@/world/Fixtures';
-import { GameState, KEY_NAME, KEY_OF, type KeyId } from '@/game/GameState';
+import { GATE_KEYS, GameState, KEY_NAME, type KeyId } from '@/game/GameState';
 import { InteractionSystem } from '@/game/Interaction';
 import { ANISOTROPY_CAP, fitToHeight, ModelLoader } from '@/world/ModelLoader';
 import { MODEL_PLACEMENTS, installModels } from '@/world/ModelProps';
@@ -87,6 +86,8 @@ import { armHiddenDoor } from '@/world/HiddenDoor';
 import { armRitualDoors, type RitualDoorsHandle } from '@/world/RitualDoors';
 import { DaayanAI, type HidingSpotRef } from '@/ai/DaayanAI';
 import { DaayanKill } from '@/ai/DaayanKill';
+import { DaayanGrab } from '@/ai/DaayanGrab';
+import { installHeldPhone, PHONE_FILL } from '@/player/HeldPhone';
 import { CoffinBurn } from '@/story/CoffinBurn';
 import { CoffinFire } from '@/effects/CoffinFire';
 import { armRitualCoffin, type CoffinHandles } from '@/world/Coffin';
@@ -97,18 +98,13 @@ import { armHiding } from '@/world/Hiding';
 import { installAudio } from '@/audio/AudioManager';
 import { installFootsteps } from '@/audio/Footsteps';
 import { installCat } from '@/world/CatRoamer';
-import {
-  ALTAR_DISPLAY,
-  CLOCK_HOURS,
-  CLOCK_MINUTES,
-  CLUES,
-  RITUAL_ORDER,
-} from '@/game/Clues';
+import { CLUES, HIDDEN_DOOR_COORDS, SCREEN_CODE } from '@/game/Clues';
 import { Hud } from '@/ui/Hud';
 import { KillFx } from '@/ui/KillFx';
 import { NoiseSystem } from '@/game/NoiseSystem';
 import { OverlayLayer, overlayButton, overlayTitle } from '@/ui/OverlayLayer';
 import { showNote } from '@/ui/NoteOverlay';
+import { showKeypad } from '@/ui/KeypadOverlay';
 import { localize } from '@/ui/Strings';
 
 export interface HouseSceneHandles {
@@ -134,14 +130,47 @@ export interface HouseSceneHandles {
 }
 
 /** Gate lock order, top of the HUD to bottom of the gate. */
-const LOCK_KEYS: KeyId[] = [KEY_OF.ritual, KEY_OF.clock, KEY_OF.breaker];
+const LOCK_KEYS: readonly KeyId[] = GATE_KEYS;
 
-const SYMBOL_NAME: Record<SymbolKind, string> = {
-  eye: 'eye',
-  skull: 'skull',
-  moon: 'moon',
-  cross: 'cross',
+/**
+ * The second gate key is not designed yet (docs/mission-flow.md). Until it is, its lock turns
+ * without a key so the chain can be played end to end. Set to false once the key has a home.
+ */
+const SECOND_KEY_PENDING = true;
+
+/**
+ * Clues that sit *inside* furniture: their prompt only appears while that furniture is open.
+ * Values are AnimatedFurniture ids from the placement hook.
+ */
+const CLUE_CONTAINER: Record<string, string> = {
+  'bedroom.father-note': 'dresser-bedroom',
+  'bedroom.mother-photo': 'dresser-bedroom',
+  'living.coords-note': 'wardrobe-chateau',
+  'hidden.book': 'hidden-wardrobe.glb',
 };
+
+/**
+ * Anchors for the mission clues that HouseProps does not publish. The dresser (x -2.8, z 9.5,
+ * facing -z) gets one per drawer section; the chateau almirah (x -0.3, z 5.5, facing +x) one
+ * just inside its doors.
+ */
+const MISSION_ANCHORS: Record<string, Vector3> = {
+  'bedroom.father-note': new Vector3(-3.05, 0.85, 9.05),
+  'bedroom.mother-photo': new Vector3(-2.55, 0.85, 9.05),
+  'living.coords-note': new Vector3(0.2, 1.15, 5.5),
+};
+
+/**
+ * HUD coordinates: whole metres from the spawn point, y from the floor under the feet. The spawn
+ * itself reads 0 0 0. Shared with the hidden door's check so the two can never disagree.
+ */
+function hudCoords(p: Vector3, groundY: number): { x: number; y: number; z: number } {
+  return {
+    x: Math.round(p.x - SPAWN.x),
+    y: Math.round(groundY),
+    z: Math.round(p.z - SPAWN.z),
+  };
+}
 
 interface Tween {
   t: number;
@@ -409,9 +438,13 @@ export function buildHouseScene(
       reach: 1.9,
       label: () => {
         if (state.isLockOpen(k)) return null;
-        return state.hasKey(k) ? `Turn the ${KEY_NAME[k]}` : 'Locked';
+        if (state.hasKey(k)) return `Turn the ${KEY_NAME[k]}`;
+        // Placeholder until the second key is designed: this lock can be forced so the chain is playable.
+        if (k === 'key-second' && SECOND_KEY_PENDING) return 'Force the middle lock';
+        return 'Locked';
       },
       onUse: () => {
+        if (k === 'key-second' && SECOND_KEY_PENDING && !state.hasKey(k)) state.collectKey(k);
         if (!state.openLock(k)) return;
         // Physical feedback, per §7: the padlock comes off its staple and hangs open, and stays that way.
         const fromY = bolt.position.y;
@@ -422,9 +455,9 @@ export function buildHouseScene(
         hud.setKeyUsed(k);
         const left = state.locksRemaining();
         if (left === 0) {
-          // The three locks are finished, but the gate does not give yet: the son in the coffin is
-          // the last thing holding it. The player has to go back for the lantern throw.
-          hud.showToast('The last bolt draws back. The gate holds.', 4.0);
+          // All three locks are off: the door swings, and stepping out onto the porch ends the run.
+          openGate();
+          hud.showToast('The last lock falls. RUN.', 4.0);
         } else {
           hud.showToast(`${left} more.`, 2.8);
         }
@@ -432,22 +465,24 @@ export function buildHouseScene(
     });
   });
 
-  // --- Puzzle 1: the order of waking ---
-  // Symbols stand in display order; the answer is a different order and lives in Clues. Touching
-  // out of turn puts every candle out and starts again — no lockout, nothing lost but the taps.
+  // --- The coffin: open it, take the third key, burn it (mission steps 7-8) ---
   /**
-   * The coffin's lid, armed by the placement hook below and released by the solve. Null until the
-   * model lands — and if its clip did not arrive, null forever, which is survivable: the key still
-   * appears, only without the ceremony.
+   * The coffin's lid, armed by the placement hook below. Null until the model lands — and if its clip
+   * did not arrive, null forever, which is survivable: the key still appears, only without the swing.
    */
   let coffinLid: CoffinHandles | null = null;
   let coffinOpenRequested = false;
   let sonSkeleton: Object3D | null = null;
   let sonBurned = false;
   let burnSequence: CoffinBurn | null = null;
+  /** After the burn the lantern is gone and the camera light becomes the phone's flashlight. */
+  let phoneLight = false;
   let hiddenWardrobe: AnimatedFurnitureHandle | null = null;
   const animatedFurnitures: AnimatedFurnitureHandle[] = [];
-  const altar = makeAltar(fx, PLACE.altar.x, PLACE.altar.z, BASE_Y, ALTAR_DISPLAY);
+  /** Furniture by AnimatedFurniture id, so clues inside them can ask whether they are open. */
+  const furnitureById = new Map<string, AnimatedFurnitureHandle>();
+  // makeAltar now only builds the small key that lies with the son's bones.
+  const altar = makeAltar(fx, PLACE.altar.x, PLACE.altar.z, BASE_Y, []);
   fixtures.add(altar.group);
   aabbs.push(...altar.aabbs);
   interact.add({
@@ -459,173 +494,114 @@ export function buildHouseScene(
       if (coffinOpenRequested) return;
       coffinOpenRequested = true;
       coffinLid?.open();
-      hud.showToast('The lid of the coffin swings open.', 3.4);
+      state.raiseTension('TERRIFYING');
+      placeKey('coffin.key', altar.key, altar.keyAnchor, 'key-coffin', 'A key, lying beside the bones.');
+      hud.showToast('The lid swings open. A small skeleton, and a key beside it.', 4.0);
     },
   });
-  /**
-   * The final task only appears once every bolt is back. The gate is held, so the player returns to
-   * the open coffin with the lantern; the throw is the end of the run, which is why losing the light
-   * is safe here. The label stays null until then, so the ordinary coffin visit cannot spend it.
-   */
+  /** Only once the key is taken, so the throw cannot spend the lantern before the key is in hand. */
   interact.add({
     id: 'coffin.burn',
     pos: new Vector3(PLACE.altar.x, BASE_Y + 0.35, PLACE.altar.z),
     reach: 2.4,
     label: () =>
-      !sonBurned && state.gateUnlocked() && coffinOpenRequested && !burnSequence?.isActive()
+      !sonBurned && coffinOpenRequested && state.hasKey('key-coffin') && !burnSequence?.isActive()
         ? 'Throw the lantern'
         : null,
     onUse: () => {
-      if (sonBurned || !state.gateUnlocked() || !coffinOpenRequested) return;
+      if (sonBurned || !coffinOpenRequested || !state.hasKey('key-coffin')) return;
       if (burnSequence?.start()) hud.setPrompt(null);
     },
   });
-  let seq: SymbolKind[] = [];
-  altar.symbolAnchors.forEach((anchor, i) => {
-    const kind = ALTAR_DISPLAY[i];
-    if (!kind) return;
-    interact.add({
-      id: `altar.${kind}`,
-      pos: anchor,
-      reach: 1.9,
-      label: () => (state.isSolved('ritual') ? null : `Touch the ${SYMBOL_NAME[kind]}`),
-      onUse: () => {
-        const flame = altar.flames[i];
-        if (flame) flame.visible = true;
-        seq.push(kind);
-        if (RITUAL_ORDER[seq.length - 1] !== kind) {
-          seq = [];
-          for (const f of altar.flames) f.visible = false;
-          hud.showToast('The candles go out.', 2.4);
-          return;
-        }
-        if (seq.length < RITUAL_ORDER.length) return;
-        if (!state.solve('ritual')) return;
-        // The coffin's lid swings open on its own eased clip — started by the placement hook's `open`
-        // and ticked by the frame loop. The key is revealed inside the opened shell.
-        coffinLid?.open();
-        placeKey('altar.key', altar.key, altar.keyAnchor, KEY_OF.ritual, 'An iron key, in the coffin.');
-        hud.showToast('The lid of the coffin swings open.', 3.4);
-      },
-    });
-  });
 
-  // --- Puzzle 2: the hour on the clock ---
-  fixtures.add(makeClock(fx, PLACE.clock.x, PLACE.clock.y, PLACE.clock.z, 0, CLOCK_HOURS, CLOCK_MINUTES));
-
-  // --- The screen over the ritual doorway ---
-  // Only the flag lives here. The screen itself is doors-sliding.glb, so everything about it — the
-  // blocker filling the opening, the prompt, and the mixer that plays its own eased slide — is built in
-  // the placement hook below, once the model exists and its fit has been applied. See RitualDoors.
+  // --- The screen over the ritual doorway, and its digital lock (mission step 6) ---
+  // The screen itself is doors-sliding.glb and is armed in the placement hook; it refuses to slide
+  // until `screenUnlocked`. The keypad is a small panel on the wall beside it.
   let ritualOpen = false;
   /** The screen's handle — mixer tick plus the opener the noise:alert path uses — null until placed. */
   let ritualScreen: RitualDoorsHandle | null = null;
+  let screenUnlocked = false;
+  const LOCK_PANEL = new Vector3(RITUAL_DOOR.x + 0.13, RITUAL_DOOR.bottom + 1.3, RITUAL_DOOR.z + RITUAL_DOOR.half + 0.32);
+  {
+    const panel = new Batch();
+    panel.box(fx.iron, 0.05, 0.22, 0.15, LOCK_PANEL.x, LOCK_PANEL.y, LOCK_PANEL.z);
+    panel.box(fx.glow, 0.012, 0.035, 0.1, LOCK_PANEL.x + 0.03, LOCK_PANEL.y + 0.065, LOCK_PANEL.z);
+    for (const g of panel.flush(fixtures, 'screen-lock')) track(g);
+  }
+  interact.add({
+    id: 'basement.screen-lock',
+    pos: new Vector3(LOCK_PANEL.x + 0.3, LOCK_PANEL.y, LOCK_PANEL.z),
+    reach: 2.0,
+    label: () => (screenUnlocked || ritualOpen ? null : 'Enter the code'),
+    onUse: () => {
+      if (screenUnlocked || ritualOpen) return;
+      showKeypad(overlay, {
+        title: 'A digital lock',
+        sub: 'Beside the paper screen',
+        onSubmit: (code) => {
+          if (code !== SCREEN_CODE) return false;
+          screenUnlocked = true;
+          state.solve('screen-code');
+          hud.showToast('The lock clicks. The screen can slide now.', 3.4);
+          return true;
+        },
+      });
+    },
+  });
 
-  // --- The book hands over the key ---
-  // The father's last line is "the first gate key is with this book, in the wardrobe", so the two
-  // have to actually be connected or the text is a lie the player can catch. It hangs off the clue
-  // loop's own first-read callback rather than wrapping `onUse` afterwards, and that is not a style
-  // choice: `onUse` passes its callback straight to `showNote`, so a wrapper added afterwards cannot
-  // reach it, and re-showing the note to attach one would reset the player's scroll position.
-  //
-  // Firing on *close* is the same rule the clue's own toast follows — a toast shown behind the open
-  // note is a toast nobody reads. The key is taken on that same closing frame: nothing can observe
-  // the wardrobe between the press and the close, and taking it here keeps the pick-up and its
-  // announcement in one place.
-  //
-  // It *returns its line* instead of calling showToast itself, because the HUD has a single toast
-  // slot and this callback already has one to publish. Two calls in one frame means the second
-  // silently overwrites the first, and the loser here would be the clue's own authored beat — the
-  // probe caught exactly that, with "He wrote it for you" vanishing behind the key. So the caller
-  // appends the two sentences and shows them together.
-  //
-  // The key is its own group (see HouseProps.hiddenKey) precisely so `visible = false` can remove it
-  // — everything else in HouseProps is merged by material and cannot be hidden individually.
-  //
-  // NOTE: this hands over KEY_OF.clock, which is the same key the bedroom strongbox already gives.
-  // That duplication is deliberate-but-open — see the note on the strongbox below — and nothing here
-  // should be read as settling which of the two stops offering it.
+  // --- The diary hands over the first key (mission steps 4-5) ---
+  // On *close* of the first read, appended to the clue's own toast (the HUD has one toast slot).
   const handOff = (id: string): string | null => {
     if (id !== 'hidden.book') return null;
-    if (!state.collectKey(KEY_OF.clock)) return null;
+    if (!state.collectKey('key-father')) return null;
     props.hiddenKey.visible = false;
-    hud.setKeyHeld(KEY_OF.clock, true);
-    return `The ${KEY_NAME[KEY_OF.clock]}, beside the diary.`;
+    hud.setKeyHeld('key-father', true);
+    return `You take the ${KEY_NAME['key-father']}.`;
   };
 
   // --- Everything readable ---
-  // One registration per CLUES entry that HouseProps published an anchor for, so a clue that has
-  // writing but no place to lie simply does not appear rather than floating at the origin.
-  //
-  // Reading stays available forever — a note can be picked up twice, and the player who forgot the
-  // code must be able to go back for it. The tension raise and the one-line beat fire on the first
-  // read only, and they fire on *close*, because a toast shown behind the open note is a toast
-  // nobody sees.
-  //
-  // `markSeen` returns true on the *first* read (see its own doc), so the two branches below are:
-  // first read -> open with the beat attached; every read after -> open with no callback at all.
+  // One registration per CLUES entry with an anchor (HouseProps' own, or MISSION_ANCHORS). Reading
+  // stays available forever; the tension raise and the one-line beat fire on the first read, on close.
+  // A clue listed in CLUE_CONTAINER only offers its prompt while that furniture is open.
+  const containerOpen = (id: string): boolean => {
+    const box = CLUE_CONTAINER[id];
+    if (box === undefined) return true;
+    const h = box === 'hidden-wardrobe.glb' ? hiddenWardrobe : furnitureById.get(box);
+    return h?.isOpen() ?? false;
+  };
   for (const [id, spec] of Object.entries(CLUES)) {
-    const at = props.anchors[id];
+    const at = props.anchors[id] ?? MISSION_ANCHORS[id];
     if (!at) continue;
     interact.add({
       id,
       pos: at,
       reach: 2.0,
-      label: () => {
-        if (id === 'hidden.book' && (!hiddenWardrobe || !hiddenWardrobe.isOpen())) {
-          return null;
-        }
-        return spec.prompt;
-      },
+      label: () => (containerOpen(id) ? spec.prompt : null),
       onUse: () => {
-        if (id === 'hidden.book' && (!hiddenWardrobe || !hiddenWardrobe.isOpen())) {
-          return;
-        }
+        if (!containerOpen(id)) return;
         if (!state.markSeen(id)) {
           showNote(overlay, spec.doc);
           return;
         }
         showNote(overlay, spec.doc, () => {
           if (spec.raises) state.raiseTension(spec.raises);
-          // One toast, not two: whatever the clue says plus whatever its pick-up adds, in that order.
           const extra = handOff(id);
           const line = [spec.firstToast, extra].filter((s): s is string => !!s).join(' ');
-          if (line) hud.showToast(line, 4.0);
+          if (line) hud.showToast(line, 4.5);
         });
       },
     });
   }
 
-  // --- The red key, on the gurney in the black magic room ---
-  //
-  // This is the key that opens the hidden door, and until now nothing in the game handed it over: the
-  // only caller of `collectRedKey()` was the DEV handle, so the hidden door could never be opened by
-  // playing and the whole room behind it was unreachable. Found by walking the objective chain
-  // end to end rather than by reading the code — the door's own prompt says "Locked" and there was no
-  // key anywhere to change that.
-  //
-  // Under the pillow, not on the table or the floor. The room is the lady's working room and the
-  // gurney is the one object in it a player already wants to look at; a key lying in the open beside
-  // it would be a pickup, and a key *under the pillow* is a thing someone hid. It also keeps the
-  // find inside the room the ritual story points at, so the two threads — the saint's work and the
-  // father's attempt to hide his son from it — meet in one place.
-  //
-  // `bed-hospital.glb` is at x -17.4, BASE_Y + 0.02, z 8.6, 2 m tall with the 1.37 m mattress span
-  // over x -18.4 .. -16.4 and z 7.94 .. 9.26 (see its ModelProps row). The pillow is modelled at the
-  // -z end, so the head is z 7.98 and the key sits just past it at z 7.72 — under the near edge,
-  // where a hand reaching from the foot of the bed arrives first.
-  const RED_KEY_AT = new Vector3(-17.4, BASE_Y + 1.34, 7.72);
-  interact.add({
-    id: 'blackmagic.red-key',
-    pos: RED_KEY_AT,
-    reach: 2.2,
-    label: () => (state.hasRedKey() ? null : 'Feel under the pillow'),
-    onUse: () => {
-      if (!state.collectRedKey()) return;
-      hud.showToast('A small red key, still warm. She keeps it under the pillow.', 4.0);
-      state.raiseTension('DISTURBING');
-    },
-  });
+  /** True while the player stands where the almirah note points (see HIDDEN_DOOR_COORDS). */
+  const atHiddenDoorCoords = (): boolean => {
+    const c = hudCoords(controller.getPosition(), controller.getGroundY());
+    return (
+      Math.abs(c.x - HIDDEN_DOOR_COORDS.x) <= 1 &&
+      c.y === HIDDEN_DOOR_COORDS.y &&
+      Math.abs(c.z - HIDDEN_DOOR_COORDS.z) <= 1
+    );
+  };
 
   // --- Walking out ---
   // The escape is not a button and not a prompt. Once the three bolts are back and the leaves have
@@ -773,13 +749,14 @@ export function buildHouseScene(
     }
     if (name === 'hidden-door') {
       // The leaf for the carved opening in the nook's west wall. Same hinge surgery as the other two
-      // doors; what is different is that this one is gated on the red key. `onOpened` is the reveal's
+      // doors; what is different is that it only cracks at the almirah note's coordinates. `onOpened` is the reveal's
       // cue.
       armHiddenDoor(root, {
         aabbs,
         player: controller,
         interact,
         state,
+        canCrack: atHiddenDoorCoords,
         tween,
         toast: (msg) => hud.showToast(msg, 4.0),
         onOpened: () => state.raiseTension('DISTURBING'),
@@ -794,6 +771,7 @@ export function buildHouseScene(
         interact,
         toast: (msg) => hud.showToast(msg, 3.4),
         onError: reportError,
+        canOpen: () => screenUnlocked,
         onOpen: () => {
           ritualOpen = true;
           state.raiseTension('DISTURBING');
@@ -816,14 +794,17 @@ export function buildHouseScene(
         root,
         clips,
         interact,
-        openLabel: 'Open Wardrobe',
-        closeLabel: 'Close Wardrobe',
-        openToast: 'You open the chateau wardrobe.',
+        openLabel: 'Open the almirah',
+        closeLabel: 'Close the almirah',
+        openToast: 'You open the almirah.',
         closeToast: 'You close the wardrobe.',
         toast: (msg) => hud.showToast(msg, 3.0),
         onError: reportError,
       });
-      if (h) animatedFurnitures.push(h);
+      if (h) {
+        animatedFurnitures.push(h);
+        furnitureById.set(name, h);
+      }
     }
     if (name === 'hidden-wardrobe.glb') {
       const h = armAnimatedFurniture({
@@ -840,6 +821,7 @@ export function buildHouseScene(
       });
       if (h) {
         animatedFurnitures.push(h);
+        furnitureById.set(name, h);
         hiddenWardrobe = h;
       }
     }
@@ -851,12 +833,15 @@ export function buildHouseScene(
         interact,
         openLabel: 'Open Drawer',
         closeLabel: 'Close Drawer',
-        openToast: 'You slide the dresser drawer open.',
+        openToast: 'The drawer slides open. Two sections, something in each.',
         closeToast: 'You close the drawer.',
         toast: (msg) => hud.showToast(msg, 3.0),
         onError: reportError,
       });
-      if (h) animatedFurnitures.push(h);
+      if (h) {
+        animatedFurnitures.push(h);
+        furnitureById.set(name, h);
+      }
     }
     if (name === 'cabinet-animated') {
       const h = armAnimatedFurniture({
@@ -871,7 +856,10 @@ export function buildHouseScene(
         toast: (msg) => hud.showToast(msg, 3.0),
         onError: reportError,
       });
-      if (h) animatedFurnitures.push(h);
+      if (h) {
+        animatedFurnitures.push(h);
+        furnitureById.set(name, h);
+      }
     }
     if (name === 'gate-main.glb') {
       swingGate = hingeMainGate(root);
@@ -886,6 +874,9 @@ export function buildHouseScene(
   // The lantern the light is coming from, and the arm holding it. Camera children, not props — the
   // rows for lantern.glb and arms.glb were removed from MODEL_PLACEMENTS so this owns both files.
   const held = installHeldLantern(modelLoader, engine.camera, reportError);
+  // The phone that replaces it after the burn. Loaded now so the hand is there the moment it is needed;
+  // its flashlight is only created on activation (see HeldPhone).
+  const phone = installHeldPhone(modelLoader, engine.camera, held.hand, reportError);
   // Sound, such as it is: one listener on the camera and one cat. The listener has to be created
   // before anything asks for a sound, and it wants the camera it is going to hear from.
   const audio = installAudio(engine.camera, reportError);
@@ -1047,6 +1038,7 @@ export function buildHouseScene(
    * with its own right-hand finger tracks.
    */
   const killFx = new KillFx();
+  const daayanGrab = new DaayanGrab(() => daayanRoot, engine.camera);
   let killClip: AnimationClip | null = null;
   let killClipReady = false;
   let killDisposed = false;
@@ -1192,30 +1184,24 @@ export function buildHouseScene(
       console.warn('coffin burn lantern prop unavailable', err);
     });
 
+  /**
+   * Mission step 9. The burn no longer ends the run: the screen comes back from black, the lantern is
+   * gone, and the camera light becomes the phone's flashlight (a cold, steady white). The player then
+   * has to reach the main door and turn the three locks. The phone-raise animation is still to come.
+   */
   const finishBurn = (): void => {
-    if (ended) return;
+    if (ended || sonBurned) return;
     sonBurned = true;
-    openGate();
-    ended = true;
-    state.escape();
-    hud.setPrompt(null);
-    overlay.show((content) => {
-      content.appendChild(overlayTitle(localize('The son is ash'), localize('The hold breaks.')));
-      const body = document.createElement('div');
-      body.style.cssText = 'font: italic 400 15px/1.75 Georgia, serif; color: #ddd2bd;';
-      const p = document.createElement('p');
-      p.style.cssText = 'margin: 0 0 1em;';
-      p.textContent = localize('Somewhere above, the gate swings open. The road is waiting.');
-      body.appendChild(p);
-      content.appendChild(body);
-      content.appendChild(
-        overlayButton(
-          localize('Begin again'),
-          () => window.location.reload(),
-          'width: 100%; margin-top: 8px;',
-        ),
-      );
-    }, undefined, { dismissible: false });
+    state.solve('coffin-burn');
+    burnSequence?.reset();
+    // Same fist, no lantern: the phone goes into the hand the player has carried all game.
+    held.setLanternShown(false);
+    held.setVisible(true);
+    phoneLight = true;
+    // The camera light becomes a faint cool fill; the phone's own spot carries the beam.
+    lantern.color.setHex(0xc8d4ff);
+    phone.setActive(true);
+    hud.showToast('The lantern is gone. You switch on your phone’s flashlight. Get to the main door.', 5.0);
   };
 
   burnSequence = new CoffinBurn({
@@ -1228,12 +1214,16 @@ export function buildHouseScene(
     fire: burnFire,
     prop: burnProp,
     getTarget: () => {
-      const target = new Vector3();
-      if (sonSkeleton) sonSkeleton.getWorldPosition(target);
-      else target.set(PLACE.altar.x, BASE_Y + 0.05, PLACE.altar.z);
-      // The skeleton lies flat: its root is the body, not a standing chest. Keep the fire on the
-      // bones; the cinematic raises its own look point.
-      target.y += 0.05;
+      const target = new Vector3(PLACE.altar.x, BASE_Y + 0.05, PLACE.altar.z);
+      if (sonSkeleton) {
+        // The middle of the body, not its root. skeleton.glb's origin sits at its feet — measured,
+        // root z 3.16 against a box of z 1.42..3.17 — so aiming at the root threw the lantern onto the
+        // foot end and lit only the lower part of the coffin. The box centre is the middle of the
+        // coffin bed; y is the bed the bones lie on, so the fire stands on it rather than inside it.
+        const box = new Box3().setFromObject(sonSkeleton);
+        box.getCenter(target);
+        target.y = box.min.y + 0.03;
+      }
       return target;
     },
     onIgnite: () => {
@@ -1321,7 +1311,6 @@ export function buildHouseScene(
      * that cannot be opened on demand cannot be checked — the prompt has to be watched changing from
      * "Locked" to "Turn the red key", and that is the whole of what this door does.
      */
-    handles.redKey = () => state.collectRedKey();
     handles.open = () => ritualScreen?.open('A screen slides open.');
     /**
      * What the crosshair is actually on, as one pasteable line.
@@ -1520,7 +1509,8 @@ export function buildHouseScene(
     // Two out-of-phase sines: one fast enough to read as flame, one slow enough to read as
     // draught. There is no longer an "off" branch here — see LANTERN_LIT.
     const flame = 3.0 + Math.sin(clock * 11.3) * 0.22 + Math.sin(clock * 4.1) * 0.14;
-    lantern.intensity = lanternOut ? 0 : flame;
+    // After the burn the camera light is the phone flashlight: steady, no flicker.
+    lantern.intensity = phoneLight ? PHONE_FILL : lanternOut ? 0 : flame;
     // The arm carrying it. Cosmetic sway only, and it rides the same clock as the flame.
     held.update(dt, LANTERN_LIT);
 
@@ -1569,6 +1559,10 @@ export function buildHouseScene(
     // restores all three at once from a button handler and an event-only update would need a second
     // emitter for that case. `setLives` is a handful of style writes and only touches changed state.
     hud.setLives(state.getLives());
+    {
+      const c = hudCoords(controller.getPosition(), controller.getGroundY());
+      hud.setCoords(c.x, c.y, c.z);
+    }
 
     /**
      * Her tick.
@@ -1590,6 +1584,9 @@ export function buildHouseScene(
     // lands on belongs to the pose just produced, and before the prompt/escape code so a locked
     // player cannot interact with the room while a beat owns the camera.
     catchSequence?.update(dt);
+    // After the sequence has written this frame's look and shake, so the fist lands on the camera
+    // the renderer is about to draw from. Her mixer has already posed the arm; this only re-aims it.
+    if (catchSequence?.isActive()) daayanGrab.apply(catchSequence.getElapsed());
     burnSequence?.update(dt);
     if (catchSequence?.isActive() || burnSequence?.isActive()) {
       hud.setPrompt(null);
@@ -1643,6 +1640,7 @@ export function buildHouseScene(
     tweens.length = 0;
     models.dispose();
     held.dispose();
+    phone.dispose();
     cat.dispose();
     footsteps.dispose();
     audio.dispose();

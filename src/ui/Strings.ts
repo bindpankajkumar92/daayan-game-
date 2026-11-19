@@ -42,6 +42,8 @@ const HINGLISH = new Map<string, string>([
   ['RESUME', 'WAPAS CHALO'],
   ['LOADING...', 'LOAD HO RAHA HAI...'],
   ['SETTINGS', 'SETTINGS'],
+  ['SKIP', 'CHHODO'],
+  ['TAP FOR SOUND', 'AWAAZ KE LIYE TAP KARO'],
   ['BACK', 'PEECHE'],
   ['PAUSED', 'RUKA HUA'],
   ['The house is awake. Get out.', 'Ghar jaag gaya hai. Bahar niklo.'],

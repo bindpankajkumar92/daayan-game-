@@ -28,18 +28,24 @@ export interface Point3 {
 /**
  * The clip is authored with the grab at 0.33 s and the blade impact at 0.95 s, then played at 0.5x
  * (see `KILL_TIME_SCALE` in DaayanAI). These are the wall-clock times after that slowdown: the grab
- * lands at 0.66 s, the sword at 1.90 s, and the whole beat including the blackout lasts 2.35 s.
+ * lands at 0.66 s and the sword at 1.90 s.
+ *
+ * The black no longer starts on the impact. It used to, and the blood had nothing to be seen against:
+ * the hit layer sat inside the black layer, so it was multiplied by a black opacity that was still 0.
+ * The blood now holds on screen for 0.55 s before the black closes over it.
  */
 export const KILL_TIMING = {
   /** How long the forced look takes to reach her. A cut, not a pan. */
   LOOK_LOCK: 0.08,
-  /** The clip's left hand reaches the lens here; camera jolt. */
+  /** Her left hand closes on the player here; camera jolt. */
   GRAB: 0.66,
-  /** Blade impact; flash and black begin. */
+  /** Blade impact; blood lands on the lens. */
   HIT: 1.9,
-  BLACK_FADE: 0.4,
+  /** The black begins closing over the blood. */
+  BLACK: 2.45,
+  BLACK_FADE: 0.5,
   /** Warp/death card, after the black is complete. */
-  END: 2.35,
+  END: 3.05,
   /** Black lifts over this long after a bed respawn. */
   FADE_IN: 0.6,
 } as const;
@@ -112,6 +118,7 @@ export class DaayanKill {
   private targetPitch = 0;
   private grabbed = false;
   private hit = false;
+  private blacked = false;
   private shakeAmp = 0;
   private shakeElapsed = 0;
 
@@ -119,6 +126,11 @@ export class DaayanKill {
 
   isActive(): boolean {
     return this.active;
+  }
+
+  /** Wall-clock seconds since `start`, for anything that poses her in step with the beat. */
+  getElapsed(): number {
+    return this.elapsed;
   }
 
   /**
@@ -162,6 +174,7 @@ export class DaayanKill {
     this.elapsed = 0;
     this.grabbed = false;
     this.hit = false;
+    this.blacked = false;
     this.shakeAmp = 0;
     this.shakeElapsed = 0;
     this.active = true;
@@ -201,8 +214,12 @@ export class DaayanKill {
     if (!this.hit && this.elapsed >= KILL_TIMING.HIT) {
       this.hit = true;
       fx.flash();
-      fx.setBlack(1, KILL_TIMING.BLACK_FADE);
       this.addShake(0.02);
+    }
+
+    if (!this.blacked && this.elapsed >= KILL_TIMING.BLACK) {
+      this.blacked = true;
+      fx.setBlack(1, KILL_TIMING.BLACK_FADE);
     }
 
     if (this.shakeAmp > 0) {

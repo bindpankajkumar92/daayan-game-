@@ -15,6 +15,7 @@ import { ScreenOrientation } from '@capacitor/screen-orientation';
 import { StatusBar } from '@capacitor/status-bar';
 import { MenuLayer } from '@/ui/MenuLayer';
 import { getPref, setPref } from '@/core/Prefs';
+import { playIntro, shouldPlayIntro } from '@/ui/IntroPlayer';
 
 function hideLoading(): void {
   const el = document.getElementById('loading');
@@ -153,6 +154,11 @@ async function main(): Promise<void> {
   // Settle the native window first, so the renderer is sized once and correctly. See
   // applyNativeChrome; the #loading card stays up for the handful of frames this takes.
   await withTimeout(applyNativeChrome(), NATIVE_CHROME_TIMEOUT_MS);
+
+  // First launch only: the intro cutscene plays above everything (including #loading) while the
+  // house builds and warms behind it. Not awaited — the boot continues underneath, and the title
+  // menu is revealed when the overlay fades. See IntroPlayer.
+  if (shouldPlayIntro()) void playIntro();
 
   const engine = new Engine(container);
   const debug = new DebugOverlay(engine.renderer);

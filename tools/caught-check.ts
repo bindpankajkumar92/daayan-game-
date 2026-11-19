@@ -120,9 +120,9 @@ console.log('\n=== A CATCH DURING THE ESCAPE IS NOT A FAILURE ===');
 console.log('\n=== BEGIN AGAIN RESTORES THE OPENING STATE ===');
 {
   const state = new GameState();
-  state.solve('ritual');
-  state.collectKey('key-ritual');
-  state.openLock('key-ritual');
+  state.solve('coffin-burn');
+  state.collectKey('key-father');
+  state.openLock('key-father');
   state.raiseTension('TERRIFYING');
   state.caught();
   state.caught();
@@ -133,9 +133,9 @@ console.log('\n=== BEGIN AGAIN RESTORES THE OPENING STATE ===');
 
   check('lives come back', state.getLives() === STARTING_LIVES, `${state.getLives()} lives`);
   check('the run is playable again', !state.isDead(), 'not dead');
-  check('puzzles are unsolved', !state.isSolved('ritual'), 'ritual cleared');
-  check('keys are gone', !state.hasKey('key-ritual'), 'key cleared');
-  check('locks are shut', !state.isLockOpen('key-ritual'), 'lock cleared');
+  check('puzzles are unsolved', !state.isSolved('coffin-burn'), 'coffin-burn cleared');
+  check('keys are gone', !state.hasKey('key-father'), 'key cleared');
+  check('locks are shut', !state.isLockOpen('key-father'), 'lock cleared');
   check('clue-read flags are cleared', !state.hasSeen('anything'), 'seen cleared');
   check(
     'tension is back to NORMAL',

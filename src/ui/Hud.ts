@@ -39,6 +39,8 @@ export class Hud {
   private toastTimer = 0;
   /** Life beads, one per `STARTING_LIVES`, dimmed as they are spent. */
   private livesRow: HTMLDivElement;
+  private coords: HTMLDivElement;
+  private coordsText = '';
   private lifePips: HTMLDivElement[] = [];
   private readonly touchVerb: boolean;
   private keySlots = new Map<string, HTMLDivElement>();
@@ -161,6 +163,17 @@ export class Hud {
       this.lifePips.push(pip);
     }
     this.root.appendChild(this.livesRow);
+
+    this.coords = document.createElement('div');
+    this.coords.id = 'hud-coords';
+    this.coords.style.cssText = `
+      position: absolute; left: 12px; top: 40px;
+      padding: 3px 8px; border-radius: 5px; white-space: pre;
+      background: rgba(10,10,14,0.6); border: 1px solid rgba(255,255,255,0.1);
+      font: 700 10px/1.2 ui-monospace, monospace; letter-spacing: 0.08em;
+      color: rgba(220,215,205,0.85); user-select: none;
+    `;
+    this.root.appendChild(this.coords);
   }
 
   /**
@@ -191,7 +204,7 @@ export class Hud {
   }
 
   /** Declare the key slots up front, in gate order, so their positions never shuffle. */
-  setKeySlots(ids: string[]): void {
+  setKeySlots(ids: readonly string[]): void {
     this.keyRow.textContent = '';
     this.keySlots.clear();
     for (const id of ids) {
@@ -239,6 +252,17 @@ export class Hud {
     const verb = this.touchVerb ? localize('INTERACT') : 'E';
     this.prompt.textContent = `${verb}   ${localize(text)}`;
     this.prompt.style.opacity = '1';
+  }
+
+  /**
+   * The X Y Z readout under the lives row: whole metres from the spawn (0 0 0). The almirah note's
+   * coordinates are read against this. Only touches the DOM when a number changes.
+   */
+  setCoords(x: number, y: number, z: number): void {
+    const text = `X ${x}   Y ${y}   Z ${z}`;
+    if (text === this.coordsText) return;
+    this.coordsText = text;
+    this.coords.textContent = text;
   }
 
   showToast(text: string, seconds = 2.4): void {

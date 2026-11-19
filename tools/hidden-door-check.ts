@@ -13,12 +13,14 @@ root.rotation.y = Math.PI / 2;
 const aabbs: Array<Record<string, number>> = [];
 let entry: { label: () => string | null; onUse: () => void } | null = null;
 let opened = 0;
+let cracked = false;
 
 armHiddenDoor(root, {
   aabbs: aabbs as never,
   player: { position: new Vector3(0, 0, 0), getRadius: () => 0.35 } as never,
   interact: { add: (o: never) => { entry = o as never; } } as never,
-  state: { openHidden: () => true, hasRedKey: () => false } as never,
+  state: { openHidden: () => true } as never,
+  canCrack: () => cracked,
   tween: (_dur: number, apply: (k: number) => void) => apply(1),
   toast: () => {},
   onOpened: () => { opened++; },
@@ -26,7 +28,11 @@ armHiddenDoor(root, {
 });
 
 if (entry === null) throw new Error('hidden door published no interaction');
-if (entry.label() !== 'Open the hidden door') throw new Error('hidden door prompt is wrong');
+if (entry.label() !== 'A solid wall?') throw new Error('hidden door prompt away from the coordinates is wrong');
+entry.onUse();
+if (aabbs.some((b) => b['minY'] === -60)) throw new Error('hidden door opened away from the coordinates');
+cracked = true;
+if (entry.label() !== 'Crack the hidden door') throw new Error('hidden door prompt at the coordinates is wrong');
 
 entry.onUse();
 

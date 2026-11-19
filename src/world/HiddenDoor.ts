@@ -10,9 +10,9 @@
  *
  * Three things this has to get right.
  *
- * - **It is locked until the red key is held.** The prompt is the whole of the feedback: "Locked"
- *   before, "Turn the red key" after. There is no rattle-and-fail, because a lock that rattles has told
- *   you it is a lock, and this one is meant to be the thing the player went looking for.
+ * - **It only cracks at the right coordinates.** The almirah note gives an X Y Z; standing there (the
+ *   HUD readout says where the player is) turns the prompt from "A solid wall?" into "Crack the hidden
+ *   door". The check itself belongs to the scene, which owns the coordinate system (`canCrack`).
  * - **The leaf swings into the stairwell.** The hinge is on the south jamb, so a positive turn carries
  *   the leaf west, away from the nook and into the room it opens onto.
  * - **The pivot has to stay under the root.** ModelProps hides the whole upper storey by the root's
@@ -37,20 +37,6 @@ const OPEN_TIME = 1.6;
 /** See InnerDoor.SETTLE_TIME: one more attempt to move the keep-out onto a leaf that has swung. */
 const SETTLE_TIME = 0.5;
 
-/**
- * TEMPORARY — the door opens without the red key, so the room behind it can be walked and tested.
- *
- * This is the whole of the bypass: set it to `false` and the key requirement is back, with the prompt
- * returning to "Locked" / "Turn the red key" and `openHidden` refusing again. Nothing else needs
- * touching, which is why the check lives in one named constant rather than being spread through the
- * label and the handler.
- *
- * The red key itself is untouched by this — `openHidden(true)` does not grant it — so the key's own
- * chain (pick it up under the gurney pillow, HUD slot, toast) still behaves exactly as it will in the
- * final build and can be tested on its own by flipping this back.
- */
-const UNLOCKED_FOR_TESTING = true;
-
 /** The leaf's parts, by the names door.glb ships. The frame is dropped at placement. */
 const LEAF_PARTS = ['door_', 'handle'];
 
@@ -59,8 +45,10 @@ export interface HiddenDoorDeps {
   /** For the leaf's own keep-out: its radius, and where it is when the leaf needs to move. */
   player: FPController;
   interact: InteractionSystem;
-  /** Reads the red key and records the door as open. */
+  /** Records the door as open. */
   state: GameState;
+  /** True while the player stands on the coordinates the almirah note gives. */
+  canCrack: () => boolean;
   tween: (dur: number, apply: (k: number) => void) => void;
   toast: (msg: string) => void;
   /** Fired once, when the leaf has actually started to move — the reveal's cue. */
@@ -138,17 +126,15 @@ export function armHiddenDoor(root: Object3D, deps: HiddenDoorDeps): void {
     reach: 2.2,
     label: () => {
       if (busy || open) return null;
-      // While the bypass is on the prompt says what the press will do, rather than naming a key the
-      // player is not carrying — a "Locked" that opens anyway is the kind of thing that gets reported
-      // as a bug by whoever plays this next.
-      if (UNLOCKED_FOR_TESTING) return 'Open the hidden door';
-      return deps.state.hasRedKey() ? 'Turn the red key' : 'Locked';
+      return deps.canCrack() ? 'Crack the hidden door' : 'A solid wall?';
     },
     onUse: () => {
       if (busy || open) return;
-      // Refuses silently without the key, which is what `openHidden` returning false means. The prompt
-      // already says "Locked", so there is nothing a toast could add.
-      if (!deps.state.openHidden(UNLOCKED_FOR_TESTING)) return;
+      if (!deps.canCrack()) {
+        deps.toast('The boards do not move. Check the coordinates on the note.');
+        return;
+      }
+      if (!deps.state.openHidden()) return;
       busy = true;
       open = true;
 
@@ -166,13 +152,7 @@ export function armHiddenDoor(root: Object3D, deps: HiddenDoorDeps): void {
           if (!landed) settle();
         }
       });
-      // The line differs while the bypass is on, so a run that skipped the key is obvious in a
-      // screenshot rather than silently indistinguishable from the real thing.
-      deps.toast(
-        UNLOCKED_FOR_TESTING && !deps.state.hasRedKey()
-          ? 'The panel swings open. (Testing — the key is not wired up yet.)'
-          : 'The key turns, and the wall opens where there was no door.',
-      );
+      deps.toast('You push where the note said. The wall opens where there was no door.');
     },
   });
 }

@@ -34,7 +34,7 @@ import {
   makeFixtureMats,
   makeGate,
 } from '@/world/Fixtures';
-import { ALTAR_DISPLAY, CLUES } from '@/game/Clues';
+import { CLUES } from '@/game/Clues';
 import type { AABB } from '@/player/FPController';
 
 const RADIUS = 0.3;
@@ -46,7 +46,7 @@ const STEP = 0.1;
 const mats = makeFixtureMats(new MeshLambertMaterial(), new MeshLambertMaterial(), () => undefined);
 
 const props = buildProps(mats);
-const altar = makeAltar(mats, PLACE.altar.x, PLACE.altar.z, BASE_Y, ALTAR_DISPLAY);
+const altar = makeAltar(mats, PLACE.altar.x, PLACE.altar.z, BASE_Y, []);
 const box = makeCodeBox(mats, PLACE.codeBox.x, PLACE.codeBox.y, PLACE.codeBox.z);
 const panel = makeBreakerPanel(mats, PLACE.breaker.x, PLACE.breaker.y, PLACE.breaker.z);
 const gate = makeGate(mats, GATE.x, GATE.z);
@@ -66,7 +66,6 @@ for (const [id, spec] of Object.entries(CLUES)) {
   const at = props.anchors[id];
   if (at) probes.push({ id: `clue ${id}  (${spec.prompt})`, pos: at, reach: 2.0 });
 }
-altar.symbolAnchors.forEach((p, i) => probes.push({ id: `altar.${ALTAR_DISPLAY[i]}`, pos: p, reach: 1.9 }));
 probes.push({ id: 'altar.key', pos: altar.keyAnchor, reach: 2.4 });
 probes.push({ id: 'box.dial', pos: box.anchor, reach: 2.0 }); // mirrors HouseScene: the box is on the floor
 probes.push({ id: 'box.key', pos: box.keyAnchor, reach: 2.4 });

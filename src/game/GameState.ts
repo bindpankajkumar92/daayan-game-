@@ -13,9 +13,17 @@
 
 import { globalBus } from '@/core/EventBus';
 
-export type PuzzleId = 'ritual' | 'clock' | 'breaker';
-/** One key per puzzle, and one gate lock per key. The names are the wiring. */
-export type KeyId = 'key-ritual' | 'key-clock' | 'key-breaker';
+/**
+ * The mission chain's milestones (see docs/mission-flow.md): the hidden door cracked by its
+ * coordinates, the basement screen's code entered, and the son's coffin burned.
+ */
+export type PuzzleId = 'hidden-door' | 'screen-code' | 'coffin-burn';
+/**
+ * The main door's three keys, one per lock. `key-father` is with the diary in the hidden room,
+ * `key-coffin` beside the son's bones; `key-second` is still to be designed (see HouseScene's
+ * SECOND_KEY_PENDING).
+ */
+export type KeyId = 'key-father' | 'key-second' | 'key-coffin';
 export type Tension = 'NORMAL' | 'SUSPICIOUS' | 'DISTURBING' | 'TERRIFYING';
 
 /**
@@ -32,17 +40,14 @@ export const STARTING_LIVES = 3;
 
 const TENSION_ORDER: Tension[] = ['NORMAL', 'SUSPICIOUS', 'DISTURBING', 'TERRIFYING'];
 
-export const KEY_OF: Record<PuzzleId, KeyId> = {
-  ritual: 'key-ritual',
-  clock: 'key-clock',
-  breaker: 'key-breaker',
-};
+/** Gate lock order, left to right in the HUD. */
+export const GATE_KEYS: readonly KeyId[] = ['key-father', 'key-second', 'key-coffin'];
 
 /** Human names, used by the HUD and the gate prompt. */
 export const KEY_NAME: Record<KeyId, string> = {
-  'key-ritual': 'Iron Key',
-  'key-clock': 'Brass Key',
-  'key-breaker': 'Rusted Key',
+  'key-father': "Father's Key",
+  'key-second': 'Second Key',
+  'key-coffin': 'Coffin Key',
 };
 
 export class GameState {
@@ -55,16 +60,7 @@ export class GameState {
   private escaped = false;
   private lives = STARTING_LIVES;
   private deaths = 0;
-  /**
-   * The red key, and the hidden door it turns.
-   *
-   * Deliberately *not* a fourth `KeyId`. The three `KeyId`s are gate locks: they share one counter
-   * (`locksRemaining`), one HUD row, and the rule that any of them may be turned in any order. The
-   * hidden door is none of those things — it is one lock, behind one door, opened once, and it is not
-   * part of the escape count. Folding it in would make `locksRemaining()` read 4 and put a fourth bolt
-   * on a gate that has three.
-   */
-  private redKey = false;
+  /** The hidden door upstairs, cracked once the player stands at the coordinates in the note. */
   private hiddenOpen = false;
 
   // --- queries ---
@@ -123,11 +119,6 @@ export class GameState {
     return this.deaths;
   }
 
-  /** Whether the player is carrying the red key, and whether the hidden door has been unlocked. */
-  hasRedKey(): boolean {
-    return this.redKey;
-  }
-
   isHiddenOpen(): boolean {
     return this.hiddenOpen;
   }
@@ -165,29 +156,15 @@ export class GameState {
     return this.locks.size === 3;
   }
 
-  /** Take the red key. Idempotent, like `collectKey`. */
-  collectRedKey(): boolean {
-    if (this.redKey) return false;
-    this.redKey = true;
-    globalBus.emit('item:collected', { id: 'key-hidden', kind: 'key' });
-    return true;
-  }
-
   /**
-   * Turn the red key in the hidden door. False when the key is not held or the door is already open,
-   * so the caller can leave the prompt alone rather than playing feedback for nothing — the same
-   * contract as `openLock`.
-   *
-   * `unlockedForTesting` opens it without the key and without granting one. It exists so the room
-   * behind the door can be walked and checked while the key's own chain is still being built; see
-   * `HiddenDoor.UNLOCKED_FOR_TESTING`, which is the one line that turns it on. It still sets
-   * `hiddenOpen`, deliberately: every downstream reader keys off that flag, and a leaf that swings
-   * while the state says the door is shut is an inconsistency waiting to be debugged later.
+   * Crack the hidden door. The caller (HiddenDoor) decides *whether* it may open — the player has to
+   * be standing on the coordinates — so this only records it. False when it is already open, so the
+   * caller can skip the feedback, the same contract as `openLock`.
    */
-  openHidden(unlockedForTesting = false): boolean {
+  openHidden(): boolean {
     if (this.hiddenOpen) return false;
-    if (!this.redKey && !unlockedForTesting) return false;
     this.hiddenOpen = true;
+    this.solve('hidden-door');
     return true;
   }
 
@@ -229,7 +206,6 @@ export class GameState {
     this.keys.clear();
     this.locks.clear();
     this.seen.clear();
-    this.redKey = false;
     this.hiddenOpen = false;
     this.tension = 'NORMAL';
     this.escaped = false;
